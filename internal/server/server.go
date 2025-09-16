@@ -15,6 +15,7 @@ import (
 const (
 	startYearKey = "N05_005b"
 	endYearKey   = "N05_005e"
+	lineNameKey  = "N05_002"
 )
 
 // Config holds configuration for the web server.
@@ -44,8 +45,29 @@ func NewHandler(cfg Config) (http.Handler, error) {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/railroads", datasetHandler(railDataset))
-	mux.HandleFunc("/api/stations", datasetHandler(stationDataset))
+	mux.HandleFunc("/api/railroads", datasetHandler(railDataset, nil))
+	mux.HandleFunc("/api/stations", datasetHandler(stationDataset, func(year int, features []feature) []feature {
+		if year == 0 {
+			return features
+		}
+
+		allowed := activeLineNames(railDataset.filterByYear(year))
+		if len(allowed) == 0 {
+			return features[:0]
+		}
+
+		filtered := make([]feature, 0, len(features))
+		for _, f := range features {
+			name := propertyString(f.Properties, lineNameKey)
+			if name == "" {
+				continue
+			}
+			if _, ok := allowed[name]; ok {
+				filtered = append(filtered, f)
+			}
+		}
+		return filtered
+	}))
 
 	fileServer := http.FileServer(http.Dir(cfg.StaticDir))
 	mux.Handle("/", fileServer)
@@ -124,6 +146,8 @@ func (f feature) MarshalJSON() ([]byte, error) {
 	return json.Marshal(base)
 }
 
+type featureModifier func(year int, features []feature) []feature
+
 func loadDataset(path string) (*dataset, error) {
 	rawBytes, err := os.ReadFile(path)
 	if err != nil {
@@ -152,7 +176,7 @@ func loadDataset(path string) (*dataset, error) {
 	}, nil
 }
 
-func datasetHandler(ds *dataset) http.HandlerFunc {
+func datasetHandler(ds *dataset, modifier featureModifier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -176,7 +200,7 @@ func datasetHandler(ds *dataset) http.HandlerFunc {
 				return
 			}
 
-			body, featureSize, err = ds.filterAndMarshal(filterTime.Year())
+			body, featureSize, err = ds.filterAndMarshal(filterTime.Year(), modifier)
 			if err != nil {
 				http.Error(w, "failed to build filtered dataset", http.StatusInternalServerError)
 				return
@@ -199,8 +223,11 @@ func datasetHandler(ds *dataset) http.HandlerFunc {
 	}
 }
 
-func (d *dataset) filterAndMarshal(year int) ([]byte, int, error) {
+func (d *dataset) filterAndMarshal(year int, modifier featureModifier) ([]byte, int, error) {
 	filtered := d.filterByYear(year)
+	if modifier != nil {
+		filtered = modifier(year, filtered)
+	}
 
 	base := make(map[string]json.RawMessage, len(d.raw))
 	for k, v := range d.raw {
@@ -283,4 +310,29 @@ func parseYearField(value any) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func propertyString(props map[string]any, key string) string {
+	if props == nil {
+		return ""
+	}
+	value, ok := props[key]
+	if !ok {
+		return ""
+	}
+	if s, ok := value.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
+}
+
+func activeLineNames(features []feature) map[string]struct{} {
+	names := make(map[string]struct{}, len(features))
+	for _, f := range features {
+		name := propertyString(f.Properties, lineNameKey)
+		if name != "" {
+			names[name] = struct{}{}
+		}
+	}
+	return names
 }
