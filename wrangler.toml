@@ -1,0 +1,16 @@
+name = "location3"
+main = "worker/index.ts"
+compatibility_date = "2024-06-20"
+
+[[routes]]
+pattern = "l3.063.jp"
+custom_domain = true
+
+[assets]
+binding = "ASSETS"
+directory = "web/static"
+
+[[r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "location3-data"
+preview_bucket_name = "location3-data-preview"
