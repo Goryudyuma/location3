@@ -28,6 +28,20 @@
         .date-filter-controls input[type="date"] { flex: 1 1 auto; padding: 4px 6px; font-size: 13px; }
         .date-filter-controls button { padding: 4px 8px; font-size: 12px; cursor: pointer; }
         .status { margin-top: 6px; font-size: 12px; color: #333; }
+        .data-credit {
+            position: absolute;
+            right: 10px;
+            bottom: 10px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            line-height: 1.4;
+        }
+        .data-credit a { color: inherit; }
     </style>
 </head>
 <body>
@@ -43,6 +57,10 @@
             </div>
         </div>
         <div id="filterStatus" class="status">全期間を表示中</div>
+    </div>
+    <div class="data-credit">
+        データ出典: <a href="https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N05-2024.html" target="_blank" rel="noopener">国土数値情報（鉄道時系列）N05-24</a><br>
+        解析結果は国土交通省が保証したものではありません。
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
