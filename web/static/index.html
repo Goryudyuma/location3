@@ -13,13 +13,21 @@
             top: 10px;
             right: 10px;
             z-index: 1000;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-family: sans-serif;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 12px 14px;
+            border-radius: 8px;
+            font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+            min-width: 220px;
         }
-        .layer-toggle label { display: block; margin-bottom: 4px; }
+        .layer-toggle label { display: block; margin-bottom: 6px; font-size: 14px; }
+        .layer-toggle input[type="checkbox"] { margin-right: 6px; }
+        .date-filter { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+        .date-filter label { font-weight: bold; font-size: 13px; }
+        .date-filter-controls { display: flex; gap: 6px; align-items: center; }
+        .date-filter-controls input[type="date"] { flex: 1 1 auto; padding: 4px 6px; font-size: 13px; }
+        .date-filter-controls button { padding: 4px 8px; font-size: 12px; cursor: pointer; }
+        .status { margin-top: 6px; font-size: 12px; color: #333; }
     </style>
 </head>
 <body>
@@ -27,6 +35,14 @@
     <div class="layer-toggle">
         <label><input type="checkbox" id="railroadsToggle" checked> 鉄道路線</label>
         <label><input type="checkbox" id="stationsToggle" checked> 駅</label>
+        <div class="date-filter">
+            <label for="dateFilter">対象日</label>
+            <div class="date-filter-controls">
+                <input type="date" id="dateFilter" aria-label="対象日">
+                <button type="button" id="clearDate">クリア</button>
+            </div>
+        </div>
+        <div id="filterStatus" class="status">全期間を表示中</div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -39,7 +55,7 @@
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 18,
-        attribution: '&copy; <a href="https://openstreetmap.org/" target="_blank">OpenStreetMap</a> contributors'
+        attribution: '&copy; <a href="https://openstreetmap.org/" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
     }).addTo(map);
 
     const layerStyle = {
@@ -61,8 +77,9 @@
     const railroadsLayer = L.geoJSON(null, {
         style: layerStyle.railroads,
         onEachFeature(feature, layer) {
-            if (feature.properties && feature.properties.N05_004) {
-                layer.bindPopup(`路線名: ${feature.properties.N05_004}`);
+            const name = feature.properties && (feature.properties.N05_004 || feature.properties.N05_002);
+            if (name) {
+                layer.bindPopup(`路線名: ${name}`);
             }
         }
     });
@@ -78,32 +95,79 @@
         }
     });
 
-    Promise.all([
-        fetch('/api/railroads').then((res) => res.json()),
-        fetch('/api/stations').then((res) => res.json())
-    ]).then(([railroads, stations]) => {
-        railroadsLayer.addData(railroads).addTo(map);
-        stationsLayer.addData(stations).addTo(map);
-        fitToLayers();
-    }).catch((err) => {
-        console.error('データの読み込みに失敗しました', err);
-        alert('データの読み込みに失敗しました。サーバーログを確認してください。');
-    });
-
     const railroadsToggle = document.getElementById('railroadsToggle');
     const stationsToggle = document.getElementById('stationsToggle');
+    const dateInput = document.getElementById('dateFilter');
+    const clearButton = document.getElementById('clearDate');
+    const statusEl = document.getElementById('filterStatus');
 
     railroadsToggle.addEventListener('change', () => toggleLayer(railroadsToggle, railroadsLayer));
     stationsToggle.addEventListener('change', () => toggleLayer(stationsToggle, stationsLayer));
 
+    let lastRequestId = 0;
+
+    async function loadData(dateString) {
+        const requestId = ++lastRequestId;
+        statusEl.textContent = '読み込み中…';
+
+        try {
+            const [railroads, stations] = await Promise.all([
+                fetchDataset('/api/railroads', dateString),
+                fetchDataset('/api/stations', dateString)
+            ]);
+
+            if (requestId !== lastRequestId) {
+                return; // Outdated request; do not update layers.
+            }
+
+            applyCollection(railroadsLayer, railroads.data, railroadsToggle);
+            applyCollection(stationsLayer, stations.data, stationsToggle);
+
+            updateStatus(dateString, railroads.count, stations.count);
+            fitToLayers();
+        } catch (err) {
+            console.error('データの読み込みに失敗しました', err);
+            if (requestId === lastRequestId) {
+                statusEl.textContent = 'データ取得に失敗しました。';
+                alert('データの読み込みに失敗しました。サーバーログを確認してください。');
+            }
+        }
+    }
+
+    async function fetchDataset(path, dateString) {
+        const query = dateString ? `?date=${encodeURIComponent(dateString)}` : '';
+        const response = await fetch(`${path}${query}`);
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`HTTP ${response.status}: ${text}`);
+        }
+        const data = await response.json();
+        const countHeader = response.headers.get('X-Feature-Count');
+        const parsed = Number.parseInt(countHeader ?? '', 10);
+        const count = Number.isNaN(parsed) ? 0 : parsed;
+        return { data, count };
+    }
+
+    function applyCollection(layer, collection, toggle) {
+        layer.clearLayers();
+        if (collection) {
+            layer.addData(collection);
+        }
+
+        if (toggle.checked) {
+            layer.addTo(map);
+        } else {
+            map.removeLayer(layer);
+        }
+    }
+
     function toggleLayer(toggle, layer) {
         if (toggle.checked) {
             layer.addTo(map);
-            fitToLayers();
         } else {
             map.removeLayer(layer);
-            fitToLayers();
         }
+        fitToLayers();
     }
 
     function fitToLayers() {
@@ -114,10 +178,34 @@
         if (map.hasLayer(stationsLayer)) {
             group.addLayer(stationsLayer);
         }
-        if (group.getLayers().length > 0) {
+        if (group.getLayers().length > 0 && group.getBounds().isValid()) {
             map.fitBounds(group.getBounds(), { padding: [20, 20] });
         }
     }
+
+    function updateStatus(dateString, railCount, stationCount) {
+        if (!dateString) {
+            statusEl.textContent = `全期間を表示中（路線 ${railCount} 件 / 駅 ${stationCount} 件）`;
+            return;
+        }
+        statusEl.textContent = `${dateString} 時点（路線 ${railCount} 件 / 駅 ${stationCount} 件）`;
+    }
+
+    dateInput.addEventListener('change', () => {
+        const value = dateInput.value;
+        loadData(value);
+    });
+
+    clearButton.addEventListener('click', () => {
+        if (dateInput.value === '') {
+            return;
+        }
+        dateInput.value = '';
+        loadData('');
+    });
+
+    // 初期ロード
+    loadData('');
     </script>
 </body>
 </html>
