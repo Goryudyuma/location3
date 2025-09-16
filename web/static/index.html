@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>N05-24 Railway Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        html, body { height: 100%; margin: 0; }
+        #map { width: 100%; height: 100%; }
+        .layer-toggle {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: sans-serif;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .layer-toggle label { display: block; margin-bottom: 4px; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="layer-toggle">
+        <label><input type="checkbox" id="railroadsToggle" checked> 鉄道路線</label>
+        <label><input type="checkbox" id="stationsToggle" checked> 駅</label>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+    if (!window.L) {
+        alert('Leaflet の読み込みに失敗しました。ネットワークと CDN アクセスを確認してください。');
+    }
+
+    const map = L.map('map').setView([35.6812, 139.7671], 6);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '&copy; <a href="https://openstreetmap.org/" target="_blank">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    const layerStyle = {
+        railroads: {
+            color: '#cc0000',
+            weight: 2,
+            opacity: 0.8
+        },
+        stations: {
+            radius: 4,
+            fillColor: '#0044cc',
+            color: '#ffffff',
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 0.9
+        }
+    };
+
+    const railroadsLayer = L.geoJSON(null, {
+        style: layerStyle.railroads,
+        onEachFeature(feature, layer) {
+            if (feature.properties && feature.properties.N05_004) {
+                layer.bindPopup(`路線名: ${feature.properties.N05_004}`);
+            }
+        }
+    });
+
+    const stationsLayer = L.geoJSON(null, {
+        pointToLayer(feature, latlng) {
+            return L.circleMarker(latlng, layerStyle.stations);
+        },
+        onEachFeature(feature, layer) {
+            if (feature.properties && feature.properties.N05_011) {
+                layer.bindPopup(`駅名: ${feature.properties.N05_011}`);
+            }
+        }
+    });
+
+    Promise.all([
+        fetch('/api/railroads').then((res) => res.json()),
+        fetch('/api/stations').then((res) => res.json())
+    ]).then(([railroads, stations]) => {
+        railroadsLayer.addData(railroads).addTo(map);
+        stationsLayer.addData(stations).addTo(map);
+        fitToLayers();
+    }).catch((err) => {
+        console.error('データの読み込みに失敗しました', err);
+        alert('データの読み込みに失敗しました。サーバーログを確認してください。');
+    });
+
+    const railroadsToggle = document.getElementById('railroadsToggle');
+    const stationsToggle = document.getElementById('stationsToggle');
+
+    railroadsToggle.addEventListener('change', () => toggleLayer(railroadsToggle, railroadsLayer));
+    stationsToggle.addEventListener('change', () => toggleLayer(stationsToggle, stationsLayer));
+
+    function toggleLayer(toggle, layer) {
+        if (toggle.checked) {
+            layer.addTo(map);
+            fitToLayers();
+        } else {
+            map.removeLayer(layer);
+            fitToLayers();
+        }
+    }
+
+    function fitToLayers() {
+        const group = L.featureGroup([]);
+        if (map.hasLayer(railroadsLayer)) {
+            group.addLayer(railroadsLayer);
+        }
+        if (map.hasLayer(stationsLayer)) {
+            group.addLayer(stationsLayer);
+        }
+        if (group.getLayers().length > 0) {
+            map.fitBounds(group.getBounds(), { padding: [20, 20] });
+        }
+    }
+    </script>
+</body>
+</html>
