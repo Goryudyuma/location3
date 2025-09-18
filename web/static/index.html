@@ -42,6 +42,17 @@
             line-height: 1.4;
         }
         .data-credit a { color: inherit; }
+        .view-actions {
+            margin-top: 8px;
+            display: flex;
+            gap: 6px;
+        }
+        .view-actions button {
+            flex: 1 1 auto;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -57,6 +68,9 @@
             </div>
         </div>
         <div id="filterStatus" class="status">全期間を表示中</div>
+        <div class="view-actions">
+            <button type="button" id="resetView">表示範囲をリセット</button>
+        </div>
     </div>
     <div class="data-credit">
         データ出典: <a href="https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N05-2024.html" target="_blank" rel="noopener">国土数値情報（鉄道時系列）N05-24</a><br>
@@ -118,11 +132,14 @@
     const dateInput = document.getElementById('dateFilter');
     const clearButton = document.getElementById('clearDate');
     const statusEl = document.getElementById('filterStatus');
+    const resetViewButton = document.getElementById('resetView');
 
     railroadsToggle.addEventListener('change', () => toggleLayer(railroadsToggle, railroadsLayer));
     stationsToggle.addEventListener('change', () => toggleLayer(stationsToggle, stationsLayer));
 
     let lastRequestId = 0;
+    let autoFitEnabled = true;
+    let suppressNextMove = false;
 
     async function loadData(dateString) {
         const requestId = ++lastRequestId;
@@ -188,7 +205,11 @@
         fitToLayers();
     }
 
-    function fitToLayers() {
+    function fitToLayers(options = {}) {
+        const force = options.force === true;
+        if (!force && !autoFitEnabled) {
+            return;
+        }
         const group = L.featureGroup([]);
         if (map.hasLayer(railroadsLayer)) {
             group.addLayer(railroadsLayer);
@@ -197,7 +218,11 @@
             group.addLayer(stationsLayer);
         }
         if (group.getLayers().length > 0 && group.getBounds().isValid()) {
+            suppressNextMove = true;
             map.fitBounds(group.getBounds(), { padding: [20, 20] });
+            map.once('moveend', () => {
+                suppressNextMove = false;
+            });
         }
     }
 
@@ -208,6 +233,18 @@
         }
         statusEl.textContent = `${dateString} 時点（路線 ${railCount} 件 / 駅 ${stationCount} 件）`;
     }
+
+    map.on('movestart', () => {
+        if (suppressNextMove) {
+            return;
+        }
+        autoFitEnabled = false;
+    });
+
+    resetViewButton.addEventListener('click', () => {
+        autoFitEnabled = true;
+        fitToLayers({ force: true });
+    });
 
     dateInput.addEventListener('change', () => {
         const value = dateInput.value;
