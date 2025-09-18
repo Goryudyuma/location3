@@ -10,6 +10,11 @@ interface Dataset {
   features: GeoJSONFeature[];
 }
 
+interface CachedPayload {
+  body: string;
+  count: number;
+}
+
 interface GeoJSONFeatureCollection {
   type: string;
   features: GeoJSONFeature[];
@@ -31,6 +36,7 @@ interface Env {
 }
 
 const datasetCache = new Map<string, Promise<Dataset>>();
+const filteredResponseCache = new Map<string, Map<number, CachedPayload>>();
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -64,6 +70,32 @@ async function handleDatasetRequest(request: Request, env: Env, url: URL): Promi
     return new Response("invalid date format, use YYYY-MM-DD", { status: 400 });
   }
 
+  let cacheBucket: Map<number, CachedPayload> | undefined;
+  let cachedPayload: CachedPayload | undefined;
+
+  if (filterYear !== 0) {
+    cacheBucket = filteredResponseCache.get(url.pathname);
+    if (!cacheBucket) {
+      cacheBucket = new Map<number, CachedPayload>();
+      filteredResponseCache.set(url.pathname, cacheBucket);
+    } else {
+      cachedPayload = cacheBucket.get(filterYear);
+    }
+
+    if (cachedPayload) {
+      const cachedHeaders = new Headers({
+        "Content-Type": "application/geo+json",
+        "Cache-Control": "public, max-age=300",
+        "X-Feature-Count": String(cachedPayload.count),
+        "X-Filter-Year": String(filterYear),
+      });
+      if (request.method === "HEAD") {
+        return new Response(null, { status: 200, headers: cachedHeaders });
+      }
+      return new Response(cachedPayload.body, { status: 200, headers: cachedHeaders });
+    }
+  }
+
   let features = filterYear === 0 ? dataset.features : filterByYear(dataset.features, filterYear);
 
   if (filterYear !== 0 && url.pathname === "/api/stations") {
@@ -78,14 +110,11 @@ async function handleDatasetRequest(request: Request, env: Env, url: URL): Promi
     }
   }
 
-  const body = filterYear === 0
-    ? dataset.original
-    : JSON.stringify({ ...dataset.parsed, features });
-
+  const featureCount = features.length;
   const headers = new Headers({
     "Content-Type": "application/geo+json",
     "Cache-Control": "public, max-age=300",
-    "X-Feature-Count": String(features.length),
+    "X-Feature-Count": String(featureCount),
   });
   if (filterYear !== 0) {
     headers.set("X-Filter-Year", String(filterYear));
@@ -93,6 +122,14 @@ async function handleDatasetRequest(request: Request, env: Env, url: URL): Promi
 
   if (request.method === "HEAD") {
     return new Response(null, { status: 200, headers });
+  }
+
+  const body = filterYear === 0
+    ? dataset.original
+    : JSON.stringify({ ...dataset.parsed, features });
+
+  if (filterYear !== 0 && cacheBucket) {
+    cacheBucket.set(filterYear, { body, count: featureCount });
   }
 
   return new Response(body, { status: 200, headers });
