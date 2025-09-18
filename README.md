@@ -40,6 +40,18 @@ Pull Request では `go test` の結果や使用した追加ツールがあれ�
    wrangler r2 object put location3-data/N05-24_Station2.geojson --file N05-24_GML/UTF-8/N05-24_Station2.geojson
    ```
 4. 必要に応じて `wrangler.toml` の `name` や `bucket_name`、`preview_bucket_name` を編集します。静的アセットは `[assets]` セクションで `binding = "ASSETS"`、`directory = "web/static"` と定義しているので、構成を変えるときは合わせて更新してください。カスタムドメインで公開する場合は `[[routes]]` の `pattern` を任意のドメイン名（例: `l3.example.com`）に書き換え、Cloudflare 側でそのドメインをゾーンに追加しておきます。
-5. `wrangler deploy` を実行すると、`web/static` のアセットが配信され、`/api/railroads` と `/api/stations` が Worker 経由で R2 のデータを提供します。デプロイ後 `wrangler tail` や Cloudflare ダッシュボードのログで動作を確認してください。
+5. `wrangler deploy`（または `make deploy-worker`）を実行すると、`web/static` のアセットが配信され、`/api/railroads` と `/api/stations` が Worker 経由で R2 のデータを提供します。デプロイ後 `wrangler tail` や Cloudflare ダッシュボードのログで動作を確認してください。
+
+### よく使う Wrangler コマンド
+
+`Makefile` にラッパーターゲットを用意しています。
+
+```bash
+# Worker のローカルプレビュー
+make worker-dev
+
+# 本番デプロイ
+make deploy-worker
+```
 
 Workers 上での利用時も、国土数値情報利用約款と OpenStreetMap のクレジット表記を忘れずに行ってください。
