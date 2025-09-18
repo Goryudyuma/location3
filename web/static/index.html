@@ -83,12 +83,37 @@
         alert('Leaflet の読み込みに失敗しました。ネットワークと CDN アクセスを確認してください。');
     }
 
-    const map = L.map('map').setView([35.6812, 139.7671], 6);
+    const defaultCenter = [35.6812, 139.7671];
+    const defaultZoom = 6;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const dateParam = urlParams.get('date') ?? '';
+    const latParam = urlParams.get('lat');
+    const lngParam = urlParams.get('lng');
+    const zoomParam = urlParams.get('zoom');
+
+    const initialDate = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : '';
+    const initialLat = latParam !== null ? Number.parseFloat(latParam) : Number.NaN;
+    const initialLng = lngParam !== null ? Number.parseFloat(lngParam) : Number.NaN;
+    const initialZoom = zoomParam !== null ? Number.parseInt(zoomParam, 10) : Number.NaN;
+    const hasInitialView = Number.isFinite(initialLat) && Number.isFinite(initialLng) && Number.isFinite(initialZoom);
+
+    const map = L.map('map');
+    if (hasInitialView) {
+        map.setView([initialLat, initialLng], initialZoom, { animate: false });
+    } else {
+        map.setView(defaultCenter, defaultZoom);
+    }
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 18,
         attribution: '&copy; <a href="https://openstreetmap.org/" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
     }).addTo(map);
+
+    let autoFitEnabled = !hasInitialView;
+    let suppressAutoMove = false;
+    let suppressUrlUpdate = false;
+    let urlSyncEnabled = false;
 
     const layerStyle = {
         railroads: {
@@ -134,12 +159,23 @@
     const statusEl = document.getElementById('filterStatus');
     const resetViewButton = document.getElementById('resetView');
 
+    const railParam = urlParams.get('rail');
+    const stationParam = urlParams.get('station');
+
+    if (initialDate) {
+        dateInput.value = initialDate;
+    }
+    if (railParam === '0') {
+        railroadsToggle.checked = false;
+    }
+    if (stationParam === '0') {
+        stationsToggle.checked = false;
+    }
+
     railroadsToggle.addEventListener('change', () => toggleLayer(railroadsToggle, railroadsLayer));
     stationsToggle.addEventListener('change', () => toggleLayer(stationsToggle, stationsLayer));
 
     let lastRequestId = 0;
-    let autoFitEnabled = true;
-    let suppressNextMove = false;
 
     async function loadData(dateString) {
         const requestId = ++lastRequestId;
@@ -160,6 +196,11 @@
 
             updateStatus(dateString, railroads.count, stations.count);
             fitToLayers();
+
+            if (!urlSyncEnabled) {
+                urlSyncEnabled = true;
+            }
+            updateURLState();
         } catch (err) {
             console.error('データの読み込みに失敗しました', err);
             if (requestId === lastRequestId) {
@@ -203,6 +244,7 @@
             map.removeLayer(layer);
         }
         fitToLayers();
+        updateURLState();
     }
 
     function fitToLayers(options = {}) {
@@ -218,12 +260,38 @@
             group.addLayer(stationsLayer);
         }
         if (group.getLayers().length > 0 && group.getBounds().isValid()) {
-            suppressNextMove = true;
+            suppressAutoMove = true;
+            suppressUrlUpdate = true;
             map.fitBounds(group.getBounds(), { padding: [20, 20] });
-            map.once('moveend', () => {
-                suppressNextMove = false;
-            });
         }
+    }
+
+    function updateURLState() {
+        if (!urlSyncEnabled) {
+            return;
+        }
+
+        const params = new URLSearchParams();
+        const dateValue = dateInput.value;
+        if (dateValue) {
+            params.set('date', dateValue);
+        }
+
+        const center = map.getCenter();
+        params.set('lat', center.lat.toFixed(5));
+        params.set('lng', center.lng.toFixed(5));
+        params.set('zoom', String(map.getZoom()));
+
+        if (!railroadsToggle.checked) {
+            params.set('rail', '0');
+        }
+        if (!stationsToggle.checked) {
+            params.set('station', '0');
+        }
+
+        const query = params.toString();
+        const newUrl = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+        history.replaceState(null, '', newUrl);
     }
 
     function updateStatus(dateString, railCount, stationCount) {
@@ -235,15 +303,28 @@
     }
 
     map.on('movestart', () => {
-        if (suppressNextMove) {
+        if (suppressAutoMove) {
             return;
         }
         autoFitEnabled = false;
     });
 
+    map.on('moveend', () => {
+        if (suppressAutoMove) {
+            suppressAutoMove = false;
+        }
+        if (suppressUrlUpdate) {
+            suppressUrlUpdate = false;
+            updateURLState();
+            return;
+        }
+        updateURLState();
+    });
+
     resetViewButton.addEventListener('click', () => {
         autoFitEnabled = true;
         fitToLayers({ force: true });
+        updateURLState();
     });
 
     dateInput.addEventListener('change', () => {
@@ -260,7 +341,7 @@
     });
 
     // 初期ロード
-    loadData('');
+    loadData(initialDate);
     </script>
 </body>
 </html>
