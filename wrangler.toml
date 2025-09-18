@@ -3,7 +3,7 @@ main = "worker/index.ts"
 compatibility_date = "2024-06-20"
 
 [observability]
-logs = { enabled = true, sampling_rate = 1.0 }
+logs = { enabled = true, sample_rate = 1.0 }
 
 [[routes]]
 pattern = "l3.063.jp"
