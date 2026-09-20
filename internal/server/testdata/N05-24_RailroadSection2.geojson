@@ -1,0 +1,11 @@
+{
+  "type": "FeatureCollection",
+  "name": "railroad fixture",
+  "features": [
+    { "type": "Feature", "id": "historic", "properties": { "N05_002": "old", "N05_005b": "1900", "N05_005e": "1950" }, "geometry": { "type": "LineString", "coordinates": [[139,35],[140,36]] }, "sourceNote": "preserve foreign members" },
+    { "type": "Feature", "id": "modern", "properties": { "N05_002": "modern", "N05_005b": 1951, "N05_005e": 9999 }, "geometry": null },
+    { "type": "Feature", "id": "boundary", "properties": { "N05_002": "boundary", "N05_005b": "1950", "N05_005e": "1950" }, "geometry": null },
+    { "type": "Feature", "id": "unknown", "properties": { "N05_005b": "999", "N05_005e": "9999" }, "geometry": null },
+    { "type": "Feature", "id": "malformed", "properties": { "N05_005b": "2000suffix", "N05_005e": 1940.5 }, "geometry": null }
+  ]
+}

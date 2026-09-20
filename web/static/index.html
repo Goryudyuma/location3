@@ -1,347 +1,226 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
-<head>
+  <head>
     <meta charset="UTF-8">
-    <title>N05-24 Railway Viewer</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <style>
-        html, body { height: 100%; margin: 0; }
-        #map { width: 100%; height: 100%; }
-        .layer-toggle {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            z-index: 1000;
-            background: rgba(255, 255, 255, 0.95);
-            padding: 12px 14px;
-            border-radius: 8px;
-            font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.25);
-            min-width: 220px;
-        }
-        .layer-toggle label { display: block; margin-bottom: 6px; font-size: 14px; }
-        .layer-toggle input[type="checkbox"] { margin-right: 6px; }
-        .date-filter { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-        .date-filter label { font-weight: bold; font-size: 13px; }
-        .date-filter-controls { display: flex; gap: 6px; align-items: center; }
-        .date-filter-controls input[type="date"] { flex: 1 1 auto; padding: 4px 6px; font-size: 13px; }
-        .date-filter-controls button { padding: 4px 8px; font-size: 12px; cursor: pointer; }
-        .status { margin-top: 6px; font-size: 12px; color: #333; }
-        .data-credit {
-            position: absolute;
-            right: 10px;
-            bottom: 10px;
-            z-index: 1000;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 6px 10px;
-            border-radius: 6px;
-            font-size: 11px;
-            font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-            line-height: 1.4;
-        }
-        .data-credit a { color: inherit; }
-        .view-actions {
-            margin-top: 8px;
-            display: flex;
-            gap: 6px;
-        }
-        .view-actions button {
-            flex: 1 1 auto;
-            padding: 4px 8px;
-            font-size: 12px;
-            cursor: pointer;
-        }
-    </style>
-</head>
-<body>
-    <div id="map"></div>
-    <div class="layer-toggle">
-        <label><input type="checkbox" id="railroadsToggle" checked> 鉄道路線</label>
-        <label><input type="checkbox" id="stationsToggle" checked> 駅</label>
-        <div class="date-filter">
-            <label for="dateFilter">対象日</label>
-            <div class="date-filter-controls">
-                <input type="date" id="dateFilter" aria-label="対象日">
-                <button type="button" id="clearDate">クリア</button>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#f6f8f5">
+    <meta name="description" content="1950年から2024年まで、日本の鉄道路線と駅の変遷を地図でたどる。年代を切り替えて、いつもの街の鉄道の歴史を見つけよう。">
+    <title>鉄道の時間地図 | 日本の鉄道をたどる</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23136b58'/%3E%3Cpath d='M23 13v38m18-38v38M20 22h24M20 32h24M20 42h24' stroke='white' stroke-width='4'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="/styles.css">
+    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script type="module" src="/app.mjs"></script>
+  </head>
+  <body>
+    <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <symbol id="i-rail" viewBox="0 0 24 24">
+          <path d="M7 3v18M17 3v18M5 7h14M5 12h14M5 17h14"/>
+        </symbol>
+        <symbol id="i-share" viewBox="0 0 24 24">
+          <path d="M12 15V3m-4 4 4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>
+        </symbol>
+        <symbol id="i-left" viewBox="0 0 24 24">
+          <path d="m14 6-6 6 6 6"/>
+        </symbol>
+        <symbol id="i-right" viewBox="0 0 24 24">
+          <path d="m10 6 6 6-6 6"/>
+        </symbol>
+        <symbol id="i-search" viewBox="0 0 24 24">
+          <circle cx="10.5" cy="10.5" r="6.5"/>
+          <path d="m16 16 5 5"/>
+        </symbol>
+        <symbol id="i-locate" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="7"/>
+          <circle cx="12" cy="12" r="2"/>
+          <path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>
+        </symbol>
+        <symbol id="i-expand" viewBox="0 0 24 24">
+          <path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6"/>
+        </symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24">
+          <path d="M12 5v14M5 12h14"/>
+        </symbol>
+        <symbol id="i-minus" viewBox="0 0 24 24">
+          <path d="M5 12h14"/>
+        </symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24">
+          <path d="m6 14 6-6 6 6"/>
+        </symbol>
+        <symbol id="i-close" viewBox="0 0 24 24">
+          <path d="m6 6 12 12M18 6 6 18"/>
+        </symbol>
+      </defs>
+    </svg>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="鉄道の時間地図 ホーム">
+        <span class="brand-mark">
+          <svg class="icon">
+            <use href="#i-rail"/>
+          </svg>
+        </span>
+        <span>
+          <strong>鉄道の時間地図</strong>
+          <span class="brand-subtitle">いつもの街を、あの頃へ。</span>
+        </span>
+      </a>
+      <div class="header-actions">
+        <span class="edition">JAPAN RAILWAY · 1950—2024</span>
+        <button id="share" class="button share-button" type="button">
+          <svg class="icon">
+            <use href="#i-share"/>
+          </svg>
+          <span>共有</span>
+        </button>
+      </div>
+    </header>
+    <main class="workspace">
+      <section class="explorer" id="explorer" aria-label="年代と表示の設定">
+        <div class="timeline">
+          <div class="section-heading">
+            <label for="yearInput">時代をたどる</label>
+            <button id="allYears" type="button" class="text-button" aria-pressed="false">全期間を見る</button>
+          </div>
+          <div class="year-navigation">
+            <button id="previousYear" class="button year-step" type="button" aria-label="1年前へ">
+              <svg class="icon">
+                <use href="#i-left"/>
+              </svg>
+            </button>
+            <div class="year-heading">
+              <div id="singleYear" class="year-value">
+                <input id="yearInput" type="number" min="1950" max="2024" step="1" value="2024" inputmode="numeric" aria-label="表示する年">
+                <span>年</span>
+              </div>
+              <strong id="allYearsLabel" class="all-years-label" hidden>全期間</strong>
+              <span id="eraLabel" class="era-label">令和6年</span>
             </div>
+            <button id="nextYear" class="button year-step" type="button" aria-label="1年後へ">
+              <svg class="icon">
+                <use href="#i-right"/>
+              </svg>
+            </button>
+          </div>
+          <div class="slider-wrap">
+            <label class="sr-only" for="yearSlider">表示する年をスライダーで選ぶ</label>
+            <input id="yearSlider" type="range" min="1950" max="2024" value="2024" step="1">
+            <div class="slider-labels" aria-hidden="true">
+              <span>1950</span>
+              <span>2024</span>
+            </div>
+          </div>
+          <div class="year-presets" aria-label="年代のショートカット">
+            <button type="button" data-year="1950">1950</button>
+            <button type="button" data-year="1980">1980</button>
+            <button type="button" data-year="2000">2000</button>
+            <button type="button" data-year="2024" aria-pressed="true">2024<span>最新</span></button>
+          </div>
         </div>
-        <div id="filterStatus" class="status">全期間を表示中</div>
-        <div class="view-actions">
-            <button type="button" id="resetView">表示範囲をリセット</button>
+        <button id="detailsToggle" class="details-toggle" type="button" aria-expanded="false" aria-controls="details">
+          <span><svg class="icon"><use href="#i-search"/></svg>駅・路線を探す / 表示設定</span>
+          <svg class="icon chevron">
+            <use href="#i-chevron"/>
+          </svg>
+        </button>
+        <div class="details" id="details">
+          <section class="search-section" aria-labelledby="searchTitle">
+            <h2 id="searchTitle">地図で見つける</h2>
+            <div class="search-field">
+              <svg class="icon">
+                <use href="#i-search"/>
+              </svg>
+              <input id="searchInput" type="search" placeholder="駅名・路線名で検索" aria-label="選択した年代の駅・路線を検索" autocomplete="off" enterkeyhint="search">
+              <button id="clearSearch" type="button" class="clear-search" aria-label="検索をクリア" hidden>
+                <svg class="icon">
+                  <use href="#i-close"/>
+                </svg>
+              </button>
+            </div>
+            <p id="searchHint" class="hint">表示中の年代から探せます</p>
+            <ul id="searchResults" class="search-results" aria-label="検索結果"></ul>
+          </section>
+          <section class="layers-section" aria-labelledby="layersTitle">
+            <h2 id="layersTitle">地図に表示</h2>
+            <label class="layer-option">
+              <span class="layer-label"><span class="legend-line"></span>鉄道路線<span id="railCount" class="feature-count">—</span></span>
+              <input id="railroadsToggle" type="checkbox" checked role="switch">
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+            <label class="layer-option">
+              <span class="layer-label"><span class="legend-station"></span>駅<span id="stationCount" class="feature-count">—</span></span>
+              <input id="stationsToggle" type="checkbox" checked role="switch">
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+          </section>
+          <div class="data-note">
+            <span class="note-label">この地図について</span>
+            <p>1950〜2024年の鉄道の変遷を、年ごとに表示します。同じ年の中の開業・廃止日は区別しません。</p>
+            <p>出典：<a href="https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N05-2024.html" target="_blank" rel="noopener">国土数値情報（鉄道時系列）N05-24</a><br>本地図の表示内容は国土交通省が保証したものではありません。</p>
+          </div>
         </div>
-    </div>
-    <div class="data-credit">
-        データ出典: <a href="https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N05-2024.html" target="_blank" rel="noopener">国土数値情報（鉄道時系列）N05-24</a><br>
-        解析結果は国土交通省が保証したものではありません。
-    </div>
-
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script>
-    if (!window.L) {
-        alert('Leaflet の読み込みに失敗しました。ネットワークと CDN アクセスを確認してください。');
-    }
-
-    const defaultCenter = [35.6812, 139.7671];
-    const defaultZoom = 6;
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const dateParam = urlParams.get('date') ?? '';
-    const latParam = urlParams.get('lat');
-    const lngParam = urlParams.get('lng');
-    const zoomParam = urlParams.get('zoom');
-
-    const initialDate = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : '';
-    const initialLat = latParam !== null ? Number.parseFloat(latParam) : Number.NaN;
-    const initialLng = lngParam !== null ? Number.parseFloat(lngParam) : Number.NaN;
-    const initialZoom = zoomParam !== null ? Number.parseInt(zoomParam, 10) : Number.NaN;
-    const hasInitialView = Number.isFinite(initialLat) && Number.isFinite(initialLng) && Number.isFinite(initialZoom);
-
-    const map = L.map('map');
-    if (hasInitialView) {
-        map.setView([initialLat, initialLng], initialZoom, { animate: false });
-    } else {
-        map.setView(defaultCenter, defaultZoom);
-    }
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 18,
-        attribution: '&copy; <a href="https://openstreetmap.org/" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
-    }).addTo(map);
-
-    let autoFitEnabled = !hasInitialView;
-    let suppressAutoMove = false;
-    let suppressUrlUpdate = false;
-    let urlSyncEnabled = false;
-
-    const layerStyle = {
-        railroads: {
-            color: '#cc0000',
-            weight: 2,
-            opacity: 0.8
-        },
-        stations: {
-            radius: 4,
-            fillColor: '#0044cc',
-            color: '#ffffff',
-            weight: 1,
-            opacity: 1,
-            fillOpacity: 0.9
-        }
-    };
-
-    const railroadsLayer = L.geoJSON(null, {
-        style: layerStyle.railroads,
-        onEachFeature(feature, layer) {
-            const name = feature.properties && (feature.properties.N05_004 || feature.properties.N05_002);
-            if (name) {
-                layer.bindPopup(`路線名: ${name}`);
-            }
-        }
-    });
-
-    const stationsLayer = L.geoJSON(null, {
-        pointToLayer(feature, latlng) {
-            return L.circleMarker(latlng, layerStyle.stations);
-        },
-        onEachFeature(feature, layer) {
-            if (feature.properties && feature.properties.N05_011) {
-                layer.bindPopup(`駅名: ${feature.properties.N05_011}`);
-            }
-        }
-    });
-
-    const railroadsToggle = document.getElementById('railroadsToggle');
-    const stationsToggle = document.getElementById('stationsToggle');
-    const dateInput = document.getElementById('dateFilter');
-    const clearButton = document.getElementById('clearDate');
-    const statusEl = document.getElementById('filterStatus');
-    const resetViewButton = document.getElementById('resetView');
-
-    const railParam = urlParams.get('rail');
-    const stationParam = urlParams.get('station');
-
-    if (initialDate) {
-        dateInput.value = initialDate;
-    }
-    if (railParam === '0') {
-        railroadsToggle.checked = false;
-    }
-    if (stationParam === '0') {
-        stationsToggle.checked = false;
-    }
-
-    railroadsToggle.addEventListener('change', () => toggleLayer(railroadsToggle, railroadsLayer));
-    stationsToggle.addEventListener('change', () => toggleLayer(stationsToggle, stationsLayer));
-
-    let lastRequestId = 0;
-
-    async function loadData(dateString) {
-        const requestId = ++lastRequestId;
-        statusEl.textContent = '読み込み中…';
-
-        try {
-            const [railroads, stations] = await Promise.all([
-                fetchDataset('/api/railroads', dateString),
-                fetchDataset('/api/stations', dateString)
-            ]);
-
-            if (requestId !== lastRequestId) {
-                return; // Outdated request; do not update layers.
-            }
-
-            applyCollection(railroadsLayer, railroads.data, railroadsToggle);
-            applyCollection(stationsLayer, stations.data, stationsToggle);
-
-            updateStatus(dateString, railroads.count, stations.count);
-            fitToLayers();
-
-            if (!urlSyncEnabled) {
-                urlSyncEnabled = true;
-            }
-            updateURLState();
-        } catch (err) {
-            console.error('データの読み込みに失敗しました', err);
-            if (requestId === lastRequestId) {
-                statusEl.textContent = 'データ取得に失敗しました。';
-                alert('データの読み込みに失敗しました。サーバーログを確認してください。');
-            }
-        }
-    }
-
-    async function fetchDataset(path, dateString) {
-        const query = dateString ? `?date=${encodeURIComponent(dateString)}` : '';
-        const response = await fetch(`${path}${query}`);
-        if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`HTTP ${response.status}: ${text}`);
-        }
-        const data = await response.json();
-        const countHeader = response.headers.get('X-Feature-Count');
-        const parsed = Number.parseInt(countHeader ?? '', 10);
-        const count = Number.isNaN(parsed) ? 0 : parsed;
-        return { data, count };
-    }
-
-    function applyCollection(layer, collection, toggle) {
-        layer.clearLayers();
-        if (collection) {
-            layer.addData(collection);
-        }
-
-        if (toggle.checked) {
-            layer.addTo(map);
-        } else {
-            map.removeLayer(layer);
-        }
-    }
-
-    function toggleLayer(toggle, layer) {
-        if (toggle.checked) {
-            layer.addTo(map);
-        } else {
-            map.removeLayer(layer);
-        }
-        fitToLayers();
-        updateURLState();
-    }
-
-    function fitToLayers(options = {}) {
-        const force = options.force === true;
-        if (!force && !autoFitEnabled) {
-            return;
-        }
-        const group = L.featureGroup([]);
-        if (map.hasLayer(railroadsLayer)) {
-            group.addLayer(railroadsLayer);
-        }
-        if (map.hasLayer(stationsLayer)) {
-            group.addLayer(stationsLayer);
-        }
-        if (group.getLayers().length > 0 && group.getBounds().isValid()) {
-            suppressAutoMove = true;
-            suppressUrlUpdate = true;
-            map.fitBounds(group.getBounds(), { padding: [20, 20] });
-        }
-    }
-
-    function updateURLState() {
-        if (!urlSyncEnabled) {
-            return;
-        }
-
-        const params = new URLSearchParams();
-        const dateValue = dateInput.value;
-        if (dateValue) {
-            params.set('date', dateValue);
-        }
-
-        const center = map.getCenter();
-        params.set('lat', center.lat.toFixed(5));
-        params.set('lng', center.lng.toFixed(5));
-        params.set('zoom', String(map.getZoom()));
-
-        if (!railroadsToggle.checked) {
-            params.set('rail', '0');
-        }
-        if (!stationsToggle.checked) {
-            params.set('station', '0');
-        }
-
-        const query = params.toString();
-        const newUrl = query ? `${window.location.pathname}?${query}` : window.location.pathname;
-        history.replaceState(null, '', newUrl);
-    }
-
-    function updateStatus(dateString, railCount, stationCount) {
-        if (!dateString) {
-            statusEl.textContent = `全期間を表示中（路線 ${railCount} 件 / 駅 ${stationCount} 件）`;
-            return;
-        }
-        statusEl.textContent = `${dateString} 時点（路線 ${railCount} 件 / 駅 ${stationCount} 件）`;
-    }
-
-    map.on('movestart', () => {
-        if (suppressAutoMove) {
-            return;
-        }
-        autoFitEnabled = false;
-    });
-
-    map.on('moveend', () => {
-        if (suppressAutoMove) {
-            suppressAutoMove = false;
-        }
-        if (suppressUrlUpdate) {
-            suppressUrlUpdate = false;
-            updateURLState();
-            return;
-        }
-        updateURLState();
-    });
-
-    resetViewButton.addEventListener('click', () => {
-        autoFitEnabled = true;
-        fitToLayers({ force: true });
-        updateURLState();
-    });
-
-    dateInput.addEventListener('change', () => {
-        const value = dateInput.value;
-        loadData(value);
-    });
-
-    clearButton.addEventListener('click', () => {
-        if (dateInput.value === '') {
-            return;
-        }
-        dateInput.value = '';
-        loadData('');
-    });
-
-    // 初期ロード
-    loadData(initialDate);
-    </script>
-</body>
+      </section>
+      <section class="map-section" aria-label="鉄道路線と駅の地図">
+        <div id="map" role="region" aria-label="鉄道地図。矢印キーで移動、プラス・マイナスキーで拡大縮小できます"></div>
+        <div class="map-context">
+          <span class="status-dot"></span>
+          <span id="mapYear">2024年の鉄道</span>
+          <span id="loadingIndicator" class="loading-indicator" hidden>読み込み中</span>
+        </div>
+        <div class="map-actions" aria-label="地図の操作">
+          <div class="zoom-actions">
+            <button id="zoomIn" type="button" class="map-button" aria-label="地図を拡大" title="拡大">
+              <svg class="icon">
+                <use href="#i-plus"/>
+              </svg>
+            </button>
+            <button id="zoomOut" type="button" class="map-button" aria-label="地図を縮小" title="縮小">
+              <svg class="icon">
+                <use href="#i-minus"/>
+              </svg>
+            </button>
+          </div>
+          <button id="locate" type="button" class="map-button" aria-label="現在地を表示" title="現在地">
+            <svg class="icon">
+              <use href="#i-locate"/>
+            </svg>
+          </button>
+          <button id="resetView" type="button" class="map-button" aria-label="日本全体を表示" title="日本全体">
+            <svg class="icon">
+              <use href="#i-expand"/>
+            </svg>
+          </button>
+        </div>
+        <div id="message" class="map-message" role="status" aria-live="polite" hidden>
+          <span id="messageText"></span>
+          <button id="retry" type="button" hidden>再読み込み</button>
+        </div>
+        <div class="map-legend">
+          <span><i class="legend-line"></i>鉄道路線</span>
+          <span><i class="legend-station"></i>駅</span>
+        </div>
+        <span id="loadStatus" class="sr-only" role="status" aria-live="polite"></span>
+      </section>
+    </main>
+    <dialog id="shareDialog">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <h2>この地図を共有</h2>
+          <button class="button" aria-label="閉じる">
+            <svg class="icon">
+              <use href="#i-close"/>
+            </svg>
+          </button>
+        </div>
+        <p>リンクをコピーすると、年代と地図の位置を共有できます。</p>
+        <label class="sr-only" for="shareUrl">共有リンク</label>
+        <input id="shareUrl" readonly>
+        <button id="copyLink" class="button primary-button" type="button">リンクをコピー</button>
+        <span id="copyStatus" role="status"></span>
+      </form>
+    </dialog>
+    <noscript>
+      <div class="noscript">地図を表示するにはJavaScriptを有効にしてください。</div>
+    </noscript>
+  </body>
 </html>

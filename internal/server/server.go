@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -128,7 +129,6 @@ func (f *feature) UnmarshalJSON(data []byte) error {
 }
 
 func (f feature) MarshalJSON() ([]byte, error) {
-	type alias feature
 	base := map[string]any{
 		"type":       f.Type,
 		"properties": f.Properties,
@@ -179,6 +179,7 @@ func loadDataset(path string) (*dataset, error) {
 func datasetHandler(ds *dataset, modifier featureModifier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
@@ -189,24 +190,22 @@ func datasetHandler(ds *dataset, modifier featureModifier) http.HandlerFunc {
 			err         error
 		)
 
-		dateParam := strings.TrimSpace(r.URL.Query().Get("date"))
-		if dateParam == "" {
+		filterYear, parseErr := parseFilterYear(r.URL.Query().Get("date"))
+		if parseErr != nil {
+			http.Error(w, "invalid date format, use YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		if filterYear == 0 {
 			body = ds.original
 			featureSize = len(ds.features)
 		} else {
-			filterTime, parseErr := time.Parse("2006-01-02", dateParam)
-			if parseErr != nil {
-				http.Error(w, "invalid date format, use YYYY-MM-DD", http.StatusBadRequest)
-				return
-			}
-
-			body, featureSize, err = ds.filterAndMarshal(filterTime.Year(), modifier)
+			body, featureSize, err = ds.filterAndMarshal(filterYear, modifier)
 			if err != nil {
 				http.Error(w, "failed to build filtered dataset", http.StatusInternalServerError)
 				return
 			}
 
-			w.Header().Set("X-Filter-Year", strconv.Itoa(filterTime.Year()))
+			w.Header().Set("X-Filter-Year", strconv.Itoa(filterYear))
 		}
 
 		w.Header().Set("Content-Type", "application/geo+json")
@@ -217,10 +216,27 @@ func datasetHandler(ds *dataset, modifier featureModifier) http.HandlerFunc {
 			return
 		}
 
-		if _, err := w.Write(body); err != nil {
-			http.Error(w, "failed to write response", http.StatusInternalServerError)
-		}
+		// A failed write means the response has already started; a second error
+		// response cannot replace it.
+		_, _ = w.Write(body)
 	}
+}
+
+// A zero return value is reserved for an omitted filter, never a calendar year.
+func parseFilterYear(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	const layout = "2006-01-02"
+	date, err := time.Parse(layout, value)
+	if err != nil {
+		return 0, err
+	}
+	if date.Year() < 1 || date.Format(layout) != value {
+		return 0, errors.New("invalid calendar date")
+	}
+	return date.Year(), nil
 }
 
 func (d *dataset) filterAndMarshal(year int, modifier featureModifier) ([]byte, int, error) {
@@ -278,38 +294,32 @@ func isActiveForYear(f feature, year int) bool {
 }
 
 func parseYearField(value any) (int, bool) {
+	var year int
 	switch v := value.(type) {
 	case string:
-		v = strings.TrimSpace(v)
-		if v == "" {
-			return 0, false
-		}
-		year, err := strconv.Atoi(v)
+		parsed, err := strconv.Atoi(strings.TrimSpace(v))
 		if err != nil {
 			return 0, false
 		}
-		if year >= 9000 || year == 999 {
-			return 0, false
-		}
-		return year, true
+		year = parsed
 	case float64:
-		year := int(v)
-		if year >= 9000 || year == 999 {
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v || v < 1 || v >= 9000 {
 			return 0, false
 		}
-		return year, true
+		year = int(v)
 	case json.Number:
-		year, err := v.Int64()
-		if err != nil {
+		parsed, err := v.Int64()
+		if err != nil || parsed < 1 || parsed >= 9000 {
 			return 0, false
 		}
-		if year >= 9000 || year == 999 {
-			return 0, false
-		}
-		return int(year), true
+		year = int(parsed)
 	default:
 		return 0, false
 	}
+	if year < 1 || year >= 9000 || year == 999 {
+		return 0, false
+	}
+	return year, true
 }
 
 func propertyString(props map[string]any, key string) string {

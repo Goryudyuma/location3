@@ -1,0 +1,12 @@
+{
+  "type": "FeatureCollection",
+  "name": "station fixture",
+  "features": [
+    { "type": "Feature", "id": "old-station", "properties": { "N05_002": " old ", "N05_005b": 1900, "N05_005e": 9999 }, "geometry": { "type": "Point", "coordinates": [139,35] } },
+    { "type": "Feature", "id": "modern-station", "properties": { "N05_002": "modern", "N05_005b": 1900, "N05_005e": 9999 }, "geometry": null },
+    { "type": "Feature", "id": "boundary-station", "properties": { "N05_002": "boundary", "N05_005b": 1950, "N05_005e": 1950 }, "geometry": null },
+    { "type": "Feature", "id": "orphan-station", "properties": { "N05_002": "missing", "N05_005b": 1900, "N05_005e": 9999 }, "geometry": null },
+    { "type": "Feature", "id": "nameless-station", "properties": null, "geometry": null },
+    { "type": "Feature", "id": "closed-station", "properties": { "N05_002": "modern", "N05_005b": 1900, "N05_005e": 1949 }, "geometry": null }
+  ]
+}
