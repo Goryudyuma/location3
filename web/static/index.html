@@ -51,6 +51,11 @@
         <symbol id="i-close" viewBox="0 0 24 24">
           <path d="m6 6 12 12M18 6 6 18"/>
         </symbol>
+        <symbol id="i-settings" viewBox="0 0 24 24">
+          <path d="M4 7h7m4 0h5M4 17h3m4 0h9"/>
+          <circle cx="13" cy="7" r="2"/>
+          <circle cx="9" cy="17" r="2"/>
+        </symbol>
       </defs>
     </svg>
     <header class="site-header">
@@ -83,6 +88,7 @@
             <button id="allYears" type="button" class="text-button" aria-pressed="false">全期間を見る</button>
           </div>
           <div class="year-navigation">
+            <button id="previousDecade" class="button decade-step" type="button" aria-label="10年前へ">−10</button>
             <button id="previousYear" class="button year-step" type="button" aria-label="1年前へ">
               <svg class="icon">
                 <use href="#i-left"/>
@@ -90,7 +96,7 @@
             </button>
             <div class="year-heading">
               <div id="singleYear" class="year-value">
-                <input id="yearInput" type="number" min="1950" max="2024" step="1" value="2024" inputmode="numeric" aria-label="表示する年">
+                <input id="yearInput" type="number" min="1950" max="2024" step="1" value="2024" inputmode="numeric" enterkeyhint="done" aria-label="表示する年">
                 <span>年</span>
               </div>
               <strong id="allYearsLabel" class="all-years-label" hidden>全期間</strong>
@@ -101,6 +107,7 @@
                 <use href="#i-right"/>
               </svg>
             </button>
+            <button id="nextDecade" class="button decade-step" type="button" aria-label="10年後へ">+10</button>
           </div>
           <div class="slider-wrap">
             <label class="sr-only" for="yearSlider">表示する年をスライダーで選ぶ</label>
@@ -117,12 +124,14 @@
             <button type="button" data-year="2024" aria-pressed="true">2024<span>最新</span></button>
           </div>
         </div>
-        <button id="detailsToggle" class="details-toggle" type="button" aria-expanded="false" aria-controls="details">
-          <span><svg class="icon"><use href="#i-search"/></svg>駅・路線を探す / 表示設定</span>
-          <svg class="icon chevron">
-            <use href="#i-chevron"/>
-          </svg>
-        </button>
+        <nav class="mobile-tools" aria-label="検索と表示設定">
+          <button id="openSearch" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="mobilePanel">
+            <svg class="icon"><use href="#i-search"/></svg>駅・路線を探す
+          </button>
+          <button id="openSettings" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="mobilePanel">
+            <svg class="icon"><use href="#i-settings"/></svg>表示・年代
+          </button>
+        </nav>
         <div class="details" id="details">
           <section class="search-section" aria-labelledby="searchTitle">
             <h2 id="searchTitle">地図で見つける</h2>
@@ -202,6 +211,27 @@
         <span id="loadStatus" class="sr-only" role="status" aria-live="polite"></span>
       </section>
     </main>
+    <dialog id="mobilePanel" class="mobile-panel" aria-labelledby="mobilePanelTitle">
+      <div class="mobile-panel-heading">
+        <h2 id="mobilePanelTitle">駅・路線を探す</h2>
+        <button id="closeMobilePanel" class="button" type="button" aria-label="パネルを閉じる">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
+      </div>
+      <div class="mobile-panel-content">
+        <div id="mobileSearchContent"></div>
+        <div id="mobileSettingsContent" hidden>
+          <section class="mobile-year-options" aria-labelledby="mobileYearTitle">
+            <h3 id="mobileYearTitle">年代を選ぶ</h3>
+            <div id="mobileYearPresets"></div>
+            <div id="mobileAllYearsSlot"></div>
+          </section>
+        </div>
+      </div>
+      <div class="mobile-panel-footer">
+        <button id="backToMap" class="button primary-button" type="button">地図に戻る</button>
+      </div>
+    </dialog>
     <dialog id="shareDialog">
       <form method="dialog">
         <div class="dialog-heading">

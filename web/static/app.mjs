@@ -1,12 +1,14 @@
 import { MIN_YEAR, MAX_YEAR, DEFAULT_VIEW, readState, writeState } from './state.mjs';
 import { createDatasetLoader, searchFeatures } from './data.mjs';
 import { createRailwayMap } from './map.mjs';
+import { createMobilePanel } from './mobile-panel.mjs';
 
 const $ = id => document.getElementById(id);
 const state = readState(window.location.search);
 const loader = createDatasetLoader();
 const numberFormat = new Intl.NumberFormat('ja-JP');
 let railwayMap;
+let mobilePanel;
 let data;
 let loadedYear;
 let requestController;
@@ -36,6 +38,8 @@ function updateYearControls() {
   $('yearSlider').setAttribute('aria-valuetext', all ? '全期間。操作すると年を選択します' : `${state.year}年`);
   $('previousYear').disabled = !all && state.year <= MIN_YEAR;
   $('nextYear').disabled = !all && state.year >= MAX_YEAR;
+  $('previousDecade').disabled = !all && state.year <= MIN_YEAR;
+  $('nextDecade').disabled = !all && state.year >= MAX_YEAR;
   $('allYears').setAttribute('aria-pressed', String(all));
   $('allYears').textContent = all ? '2024年に戻る' : '全期間を見る';
   document.querySelectorAll('[data-year]').forEach(button => {
@@ -59,6 +63,9 @@ function showMessage(message, { retry = false, temporary = false } = {}) {
 }
 
 function setLoading(loading) {
+  const displayYear = loading || !data ? state.year : loadedYear;
+  const label = displayYear === null ? '全期間' : `${displayYear}年`;
+  $('mapYear').textContent = loading && data && loadedYear !== state.year ? `${label}へ切替中` : `${label}の鉄道`;
   $('loadingIndicator').hidden = !loading;
   document.querySelector('.map-section').classList.toggle('is-loading', loading);
   $('map').setAttribute('aria-busy', String(loading));
@@ -97,7 +104,6 @@ async function loadData() {
     if (controller.signal.aborted || generation !== requestGeneration) return;
     data = result;
     loadedYear = requestedYear;
-    $('mapYear').textContent = requestedYear === null ? '全期間の鉄道' : `${requestedYear}年の鉄道`;
     setLoading(false);
     renderSearch();
     const counts = `路線 ${numberFormat.format(data.railroads.features.length)}件、駅 ${numberFormat.format(data.stations.features.length)}件`;
@@ -168,15 +174,9 @@ function selectResult(index) {
   else $('railroadsToggle').checked = true;
   setLayers();
   $('searchInput').blur();
-  if (window.matchMedia('(max-width: 760px), (max-height: 550px) and (orientation: landscape)').matches) setDetails(false);
-  // Allow the map's ResizeObserver to see the collapsed panel before fitting.
+  mobilePanel.close();
+  // Allow the map's ResizeObserver to see the closed panel before fitting.
   requestAnimationFrame(() => requestAnimationFrame(() => railwayMap.focusResult(result)));
-}
-
-function setDetails(expanded) {
-  $('explorer').classList.toggle('is-expanded', expanded);
-  $('detailsToggle').setAttribute('aria-expanded', String(expanded));
-  if (!expanded) $('explorer').scrollTop = 0;
 }
 
 async function shareMap() {
@@ -208,11 +208,12 @@ function bindEvents() {
   });
   $('previousYear').addEventListener('click', () => chooseYear((state.year ?? MAX_YEAR) - 1));
   $('nextYear').addEventListener('click', () => chooseYear((state.year ?? MAX_YEAR - 1) + 1));
+  $('previousDecade').addEventListener('click', () => chooseYear((state.year ?? MAX_YEAR) - 10));
+  $('nextDecade').addEventListener('click', () => chooseYear((state.year ?? MAX_YEAR - 10) + 10));
   $('allYears').addEventListener('click', () => chooseYear(state.year === null ? MAX_YEAR : null));
   document.querySelectorAll('[data-year]').forEach(button => button.addEventListener('click', () => chooseYear(Number(button.dataset.year))));
   $('railroadsToggle').addEventListener('change', setLayers);
   $('stationsToggle').addEventListener('change', setLayers);
-  $('detailsToggle').addEventListener('click', () => setDetails($('detailsToggle').getAttribute('aria-expanded') !== 'true'));
   $('searchInput').addEventListener('input', renderSearch);
   $('searchInput').addEventListener('keydown', event => {
     if (event.isComposing || event.keyCode === 229) return;
@@ -259,6 +260,7 @@ function bindEvents() {
 }
 
 function init() {
+  mobilePanel = createMobilePanel();
   updateYearControls();
   $('railroadsToggle').checked = state.railroads;
   $('stationsToggle').checked = state.stations;

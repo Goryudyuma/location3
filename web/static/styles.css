@@ -386,7 +386,7 @@ input[type=range]::-moz-range-thumb {
   margin-left: 4px;
 }
 
-.details-toggle {
+.mobile-tools,.decade-step {
   display: none;
 }
 
@@ -443,7 +443,7 @@ h2 {
 }
 
 .clear-search {
-  width: 30px;
+  width: 44px;
   min-height: 44px;
   border: 0;
   padding: 0;
@@ -823,8 +823,8 @@ h2 {
 }
 
 .leaflet-popup-close-button {
-  min-width: 32px;
-  min-height: 32px;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .leaflet-container:focus-visible {
@@ -914,12 +914,141 @@ dialog p {
   }
 }
 
-@media(max-width:760px) {
+/* Keep the same controls in the desktop sidebar and the mobile dialog. */
+.mobile-panel {
+  padding: 0;
+  width: min(560px,calc(100% - 16px));
+  max-width: none;
+  max-height: min(680px,calc(var(--visual-height,100dvh) - 16px));
+  position: fixed;
+  inset: auto auto auto 50%;
+  top: calc(var(--visual-top,0px) + var(--visual-height,100dvh));
+  transform: translate(-50%,-100%);
+  margin: 0;
+  border: 0;
+  border-radius: 22px 22px 0 0;
+  overflow: hidden;
+}
+
+.mobile-panel[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.mobile-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex: none;
+  gap: 12px;
+  padding: 14px 16px 10px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mobile-panel-heading h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.mobile-panel-heading .button {
+  border: 0;
+  background: var(--paper);
+}
+
+.mobile-panel-content {
+  padding: 18px 20px;
+  overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+}
+
+.mobile-panel-content h3 {
+  margin: 0 0 14px;
+  font-size: 13px;
+}
+
+.mobile-panel .search-section h2 {
+  display: none;
+}
+
+.mobile-panel .search-field {
+  position: sticky;
+  top: 0;
+  background: var(--paper);
+  z-index: 1;
+}
+
+.mobile-panel .search-field input {
+  font-size: 16px;
+  height: 48px;
+}
+
+.mobile-panel .search-results {
+  max-height: none;
+  overflow: visible;
+}
+
+.mobile-panel .search-result {
+  min-height: 64px;
+  padding: 13px 2px;
+}
+
+.mobile-panel .result-name {
+  font-size: 15px;
+}
+
+.mobile-panel .result-detail,.mobile-panel .hint {
+  font-size: 12px;
+}
+
+.mobile-panel .layers-section {
+  padding-top: 20px;
+  margin-top: 20px;
+}
+
+.mobile-panel .layer-option {
+  min-height: 54px;
+}
+
+.mobile-panel .layer-label {
+  font-size: 14px;
+}
+
+.mobile-panel .data-note {
+  font-size: 11px;
+}
+
+#mobileAllYearsSlot .text-button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  font-size: 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-decoration: none;
+}
+
+#mobileAllYearsSlot .text-button[aria-pressed=true] {
+  background: var(--accent-light);
+}
+
+.mobile-panel-footer {
+  flex: none;
+  padding: 12px 20px max(12px,env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: white;
+}
+
+.mobile-panel-footer .button {
+  min-height: 48px;
+  font-size: 14px;
+}
+
+@media(max-width:760px),(max-height:550px) and (orientation:landscape) {
   .site-header {
-    height: 65px;
-    padding: 0 16px;
-    padding-top: env(safe-area-inset-top);
-    height: calc(65px + env(safe-area-inset-top));
+    height: calc(54px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) 0 max(12px,env(safe-area-inset-left));
   }
 
   .brand {
@@ -927,28 +1056,22 @@ dialog p {
   }
 
   .brand-mark {
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
   }
 
   .brand-mark .icon {
-    width: 23px;
-    height: 23px;
+    width: 21px;
+    height: 21px;
   }
 
   .brand strong {
-    font-size: 16px;
+    font-size: 15px;
     letter-spacing: .025em;
   }
 
-  .brand-subtitle {
-    font-size: 9px;
-    margin-top: 3px;
-    letter-spacing: .025em;
-  }
-
-  .edition {
+  .brand-subtitle,.edition {
     display: none;
   }
 
@@ -957,15 +1080,11 @@ dialog p {
   }
 
   .share-button {
-    min-height: 40px;
-    min-width: 40px;
-    padding: 8px 10px;
+    min-height: 44px;
+    min-width: 44px;
+    padding: 8px;
     border-color: transparent;
-    font-size: 11px;
-  }
-
-  .share-button .icon {
-    width: 18px;
+    font-size: 12px;
   }
 
   .workspace {
@@ -974,169 +1093,147 @@ dialog p {
 
   .map-section {
     order: 0;
-    min-height: 110px;
+    min-height: 100px;
   }
 
   .explorer {
     order: 1;
     width: 100%;
-    border-right: 0;
+    border: 0;
     border-top: 1px solid var(--line);
-    padding: 10px 20px max(5px,env(safe-area-inset-bottom));
+    padding: 12px max(12px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));
     overflow-y: auto;
-    max-height: 66%;
-    border-radius: 20px 20px 0 0;
-    margin-top: -13px;
+    max-height: 55%;
+    border-radius: 18px 18px 0 0;
     box-shadow: 0 -4px 20px #234a3310;
     z-index: 2;
     flex-shrink: 0;
   }
 
-  .timeline {
-    max-width: 560px;
+  .timeline,.mobile-tools {
+    max-width: 520px;
     margin: 0 auto;
   }
 
-  .section-heading {
-    font-size: 10px;
-    line-height: 1;
-  }
-
-  .text-button {
-    font-size: 10px;
-    min-height: 44px;
-    padding: 4px 0 4px 12px;
+  .timeline .section-heading,.details {
+    display: none;
   }
 
   .year-navigation {
-    margin: 0 0 1px;
-    justify-content: center;
-    gap: 35px;
+    display: grid;
+    grid-template-columns: 44px 44px minmax(100px,1fr) 44px 44px;
+    align-items: center;
+    margin: 0;
+    gap: 4px;
   }
 
-  .year-step {
+  .year-step,.decade-step {
+    display: inline-flex;
     min-width: 44px;
-    min-height: 44px;
-    height: 44px;
+    min-height: 48px;
     width: 44px;
+    padding: 0;
     background: var(--paper);
     border: 0;
+    border-radius: 12px;
+  }
+
+  .decade-step {
+    font-size: 13px;
+    font-weight: 650;
+    color: var(--accent);
+    background: var(--accent-light);
+    font-variant-numeric: tabular-nums;
   }
 
   .year-heading {
-    min-width: 150px;
+    min-width: 0;
+  }
+
+  .year-value {
+    gap: 3px;
   }
 
   .year-value input {
-    font-size: 42px;
-    width: 104px;
+    font-size: 36px;
+    width: 86px;
     line-height: 1;
   }
 
   .year-value>span {
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .era-label {
-    font-size: 9px;
+    font-size: 10px;
     margin-top: 2px;
-    min-height: 13px;
+    min-height: 14px;
+    letter-spacing: 0;
   }
 
   .all-years-label {
-    font-size: 29px;
-    line-height: 1.4;
+    font-size: 25px;
+    line-height: 1.45;
+  }
+
+  .all-years-label:not([hidden])+.era-label {
+    font-size: 8px;
   }
 
   .slider-wrap {
-    margin-top: 0;
+    margin: 2px 7px 6px;
   }
 
   input[type=range] {
     height: 44px;
   }
 
+  input[type=range]::-webkit-slider-thumb {
+    width: 28px;
+    height: 28px;
+    margin-top: -12px;
+  }
+
+  input[type=range]::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+  }
+
   .slider-labels {
-    font-size: 9px;
-    margin-top: -1px;
-    margin-bottom: 8px;
-  }
-
-  .year-presets {
-    gap: 8px;
-  }
-
-  .year-presets button {
-    height: 44px;
-    font-size: 11px;
-  }
-
-  .year-presets button span {
-    font-size: 8px;
-  }
-
-  .details-toggle {
-    max-width: 560px;
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border: 0;
-    background: white;
-    padding: 5px 0 0;
-    min-height: 44px;
-    position: sticky;
-    top: -10px;
-    z-index: 3;
     font-size: 10px;
-    color: var(--muted);
-    margin: 0 auto;
+    margin: -2px 0 0;
   }
 
-  .details-toggle>span {
+  .mobile-tools {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 8px;
+    border-top: 1px solid var(--line);
+    padding-top: 8px;
+  }
+
+  .mobile-tools button {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 7px;
+    min-height: 44px;
+    border: 1px solid var(--line);
+    background: white;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
   }
 
-  .details-toggle .icon {
-    width: 15px;
-    height: 15px;
+  .mobile-tools button:first-child {
+    background: var(--accent-light);
+    border-color: var(--accent-light);
+    color: var(--accent);
   }
 
-  .details-toggle .chevron {
-    transition: transform .15s;
-  }
-
-  .details-toggle[aria-expanded=true] .chevron {
-    transform: rotate(180deg);
-  }
-
-  .details {
-    display: none;
-    max-width: 560px;
-    margin: 0 auto;
-    padding-top: 17px;
-    border-top: 1px solid var(--line);
-  }
-
-  .explorer.is-expanded .details {
-    display: block;
-  }
-
-  .search-field input {
-    font-size: 16px;
-  }
-
-  .layers-section {
-    padding-top: 16px;
-    margin-top: 17px;
-  }
-
-  .data-note {
-    margin-top: 15px;
-    padding-top: 15px;
-    padding-bottom: 15px;
+  .mobile-tools .icon {
+    width: 18px;
+    height: 18px;
   }
 
   .map-context {
@@ -1144,73 +1241,64 @@ dialog p {
     top: 12px;
     gap: 6px;
     padding: 10px 11px;
-    font-size: 10px;
-    max-width: calc(100% - 77px);
+    font-size: 11px;
+    max-width: calc(100% - 24px);
   }
 
   .loading-indicator {
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .map-actions {
-    right: 12px;
-    top: 12px;
-    gap: 9px;
+    right: max(12px,env(safe-area-inset-right));
+    top: auto;
+    bottom: 28px;
+    display: grid;
+    grid-template-columns: repeat(2,44px);
+    gap: 8px;
+  }
+
+  .zoom-actions {
+    display: contents;
+  }
+
+  .zoom-actions .map-button {
+    border: 1px solid #dce4da;
+    border-radius: 10px;
+    box-shadow: var(--shadow);
   }
 
   .map-legend {
-    bottom: 33px;
+    bottom: 28px;
     left: 12px;
     padding: 8px 10px;
     gap: 12px;
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .leaflet-control-attribution {
     font-size: 8px!important;
     line-height: 1.35!important;
     max-width: calc(100vw - 12px);
-    margin-bottom: 13px!important;
   }
 
   .map-message {
-    bottom: 72px;
+    bottom: 136px;
     padding: 10px 13px;
-    font-size: 11px;
+    font-size: 12px;
     max-width: calc(100% - 24px);
-  }
-
-  .search-results {
-    max-height: 190px;
   }
 
   .map-message button {
     margin: 6px 0 0;
     display: block;
-    min-height: 40px;
+    min-height: 44px;
   }
 }
 
 @media(max-width:360px) {
-  .explorer {
-    padding-left: 15px;
-    padding-right: 15px;
-  }
-
-  .brand-subtitle {
-    display: none;
-  }
-
   .brand strong {
     font-size: 14px;
-  }
-
-  .year-navigation {
-    gap: 25px;
-  }
-
-  .share-button {
-    gap: 4px;
   }
 
   .map-legend {
@@ -1220,7 +1308,7 @@ dialog p {
 
 @media(max-height:550px) and (orientation:landscape) {
   .site-header {
-    height: 52px;
+    height: 48px;
   }
 
   .workspace {
@@ -1229,88 +1317,18 @@ dialog p {
 
   .explorer {
     order: 0;
-    width: 300px;
+    width: 320px;
     border-radius: 0;
-    margin: 0;
     max-height: 100%;
-    padding: 8px 16px;
+    padding: 14px 12px max(8px,env(safe-area-inset-bottom));
   }
 
   .map-section {
     order: 1;
   }
 
-  .details-toggle {
-    display: flex;
-    width: 100%;
-    align-items: center;
-    justify-content: space-between;
-    position: sticky;
-    top: -8px;
-    z-index: 3;
-    min-height: 44px;
-    padding: 5px 0;
-    border: 0;
-    background: white;
-    color: var(--muted);
-    font-size: 10px;
-  }
-
-  .details-toggle>span {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-  }
-
-  .details-toggle .icon {
-    width: 15px;
-    height: 15px;
-  }
-
-  .details-toggle[aria-expanded=true] .chevron {
-    transform: rotate(180deg);
-  }
-
-  .details {
-    display: none;
-  }
-
-  .explorer.is-expanded .details {
-    display: block;
-  }
-
-  .edition {
-    display: none;
-  }
-
-  .brand-subtitle {
-    display: none;
-  }
-
-  .timeline {
-    max-width: none;
-  }
-
-  .year-navigation {
-    margin: 0;
-    gap: 10px;
-  }
-
-  .year-value input {
-    font-size: 40px;
-    width: 98px;
-  }
-
-  .year-heading {
-    min-width: 125px;
-  }
-
-  .year-presets button {
-    height: 44px;
-  }
-
-  .leaflet-control-attribution {
-    margin-bottom: 0!important;
+  .mobile-panel {
+    max-height: calc(var(--visual-height,100dvh) - 12px);
   }
 }
 
