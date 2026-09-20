@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,9 +78,10 @@ func NewHandler(cfg Config) (http.Handler, error) {
 }
 
 type dataset struct {
-	original []byte
-	raw      map[string]json.RawMessage
-	features []feature
+	original     []byte
+	originalETag string
+	raw          map[string]json.RawMessage
+	features     []feature
 }
 
 type feature struct {
@@ -170,9 +172,10 @@ func loadDataset(path string) (*dataset, error) {
 	}
 
 	return &dataset{
-		original: rawBytes,
-		raw:      raw,
-		features: features,
+		original:     rawBytes,
+		originalETag: contentETag(rawBytes),
+		raw:          raw,
+		features:     features,
 	}, nil
 }
 
@@ -186,6 +189,7 @@ func datasetHandler(ds *dataset, modifier featureModifier) http.HandlerFunc {
 
 		var (
 			body        []byte
+			etag        string
 			featureSize int
 			err         error
 		)
@@ -197,6 +201,7 @@ func datasetHandler(ds *dataset, modifier featureModifier) http.HandlerFunc {
 		}
 		if filterYear == 0 {
 			body = ds.original
+			etag = ds.originalETag
 			featureSize = len(ds.features)
 		} else {
 			body, featureSize, err = ds.filterAndMarshal(filterYear, modifier)
@@ -204,6 +209,7 @@ func datasetHandler(ds *dataset, modifier featureModifier) http.HandlerFunc {
 				http.Error(w, "failed to build filtered dataset", http.StatusInternalServerError)
 				return
 			}
+			etag = contentETag(body)
 
 			w.Header().Set("X-Filter-Year", strconv.Itoa(filterYear))
 		}
@@ -211,6 +217,12 @@ func datasetHandler(ds *dataset, modifier featureModifier) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/geo+json")
 		w.Header().Set("Cache-Control", "public, max-age=300")
 		w.Header().Set("X-Feature-Count", strconv.Itoa(featureSize))
+		w.Header().Set("ETag", etag)
+
+		if matchesETag(strings.Join(r.Header.Values("If-None-Match"), ","), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
 
 		if r.Method == http.MethodHead {
 			return
@@ -220,6 +232,49 @@ func datasetHandler(ds *dataset, modifier featureModifier) http.HandlerFunc {
 		// response cannot replace it.
 		_, _ = w.Write(body)
 	}
+}
+
+func contentETag(body []byte) string {
+	return fmt.Sprintf(`"%x"`, sha256.Sum256(body))
+}
+
+// GET and HEAD use weak comparison. Parse quoted tags rather than splitting on
+// commas, which may themselves be part of an opaque entity tag.
+func matchesETag(value, current string) bool {
+	value = strings.TrimSpace(value)
+	if value == "*" {
+		return true
+	}
+	matched := false
+	for value != "" {
+		value = strings.TrimLeft(value, " \t,")
+		if value == "" {
+			break
+		}
+		value = strings.TrimPrefix(value, "W/")
+		if len(value) < 2 || value[0] != '"' {
+			return false
+		}
+		end := 1
+		for end < len(value) && value[end] != '"' {
+			if value[end] < 0x21 || value[end] == 0x7f {
+				return false
+			}
+			end++
+		}
+		if end == len(value) {
+			return false
+		}
+		matched = matched || value[:end+1] == current
+		value = strings.TrimLeft(value[end+1:], " \t")
+		if value != "" {
+			if value[0] != ',' {
+				return false
+			}
+			value = value[1:]
+		}
+	}
+	return matched
 }
 
 // A zero return value is reserved for an omitted filter, never a calendar year.

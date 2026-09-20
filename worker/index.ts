@@ -48,11 +48,21 @@ export default {
       const assetHeaders = new Headers();
       const encoding = request.headers.get("Accept-Encoding");
       if (encoding) assetHeaders.set("Accept-Encoding", encoding);
+      // Let static assets validate their own ETags without reading GeoJSON here.
+      // If-None-Match takes precedence over If-Modified-Since (RFC 9110).
+      const etag = request.headers.get("If-None-Match");
+      const modifiedSince = request.headers.get("If-Modified-Since");
+      if (etag !== null) assetHeaders.set("If-None-Match", etag);
+      else if (modifiedSince !== null) assetHeaders.set("If-Modified-Since", modifiedSince);
       const asset = await env.ASSETS.fetch(new Request(new URL(entry.path, request.url), {
         method: request.method,
         headers: assetHeaders,
       }));
-      if (asset.status !== 200) throw new Error(`dataset asset returned ${asset.status}`);
+      if (asset.status !== 200 && asset.status !== 304) throw new Error(`dataset asset returned ${asset.status}`);
+      // Some asset runtimes only recognize a single tag. Complete weak/list/*
+      // matching using response headers, without consuming the dataset stream.
+      const notModified = asset.status === 304 || matchesETag(etag, asset.headers.get("ETag"));
+      if (notModified && asset.body) await asset.body.cancel();
 
       const headers = new Headers(asset.headers);
       headers.set("Content-Type", "application/geo+json");
@@ -60,9 +70,13 @@ export default {
       headers.set("X-Feature-Count", String(entry.count));
       if (year !== 0) headers.set("X-Filter-Year", String(year));
       else headers.delete("X-Filter-Year");
+      if (notModified) {
+        headers.delete("Content-Length");
+        headers.delete("Content-Encoding");
+      }
 
-      return new Response(request.method === "HEAD" ? null : asset.body, {
-        status: 200,
+      return new Response(request.method === "HEAD" || notModified ? null : asset.body, {
+        status: notModified ? 304 : 200,
         headers,
         // Preserve any pre-encoded asset bytes and their Content-Encoding.
         encodeBody: "manual",
@@ -73,6 +87,30 @@ export default {
     }
   },
 };
+
+function matchesETag(value: string | null, current: string | null): boolean {
+  if (value === null) return false;
+  const input = value.trim();
+  if (input === "*") return true;
+  if (current === null) return false;
+  // An opaque tag may contain commas. Empty list elements are allowed by HTTP.
+  const tag = /(?:W\/)?("[\x21\x23-\x7e\x80-\xff]*")/y;
+  const selected = current.replace(/^W\//, "");
+  let matched = false;
+  let offset = 0;
+  while (offset < input.length) {
+    while (offset < input.length && /[ \t,]/.test(input[offset])) offset++;
+    if (offset === input.length) break;
+    tag.lastIndex = offset;
+    const item = tag.exec(input);
+    if (!item) return false;
+    matched ||= item[1] === selected;
+    offset = tag.lastIndex;
+    while (offset < input.length && /[ \t]/.test(input[offset])) offset++;
+    if (offset < input.length && input[offset++] !== ",") return false;
+  }
+  return matched;
+}
 
 async function loadManifest(assets: Fetcher, origin: string): Promise<Manifest> {
   let pending = manifests.get(assets);

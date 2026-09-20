@@ -1,13 +1,19 @@
 package server
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestParseFilterYear(t *testing.T) {
@@ -135,5 +141,194 @@ func TestDatasetHandler_InvalidRequest(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/railroads", nil))
 	if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "GET, HEAD" {
 		t.Fatal("POST must return 405 with allowed methods")
+	}
+}
+
+func TestDatasetHandler_ConditionalRequests(t *testing.T) {
+	handler, err := NewHandler(Config{UTF8Dir: "testdata", StaticDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"/api/railroads", "/api/stations", "/api/railroads?date=1950-01-01",
+		"/api/stations?date=1950-01-01", "/api/stations?date=1899-01-01",
+	} {
+		t.Run(path, func(t *testing.T) {
+			original := httptest.NewRecorder()
+			handler.ServeHTTP(original, httptest.NewRequest(http.MethodGet, path, nil))
+			etag := original.Header().Get("ETag")
+			if expected := fmt.Sprintf(`"%x"`, sha256.Sum256(original.Body.Bytes())); etag != expected {
+				t.Fatalf("ETag = %q, want actual response SHA-256 %q", etag, expected)
+			}
+			tests := []struct {
+				name   string
+				values []string
+				status int
+			}{
+				{"strong", []string{etag}, http.StatusNotModified},
+				{"weak", []string{"W/" + etag}, http.StatusNotModified},
+				{"list", []string{`"different", W/` + etag + `, "another"`}, http.StatusNotModified},
+				{"multiple headers", []string{`"different"`, "W/" + etag}, http.StatusNotModified},
+				{"comma in opaque tag", []string{`"other,tag", ` + etag}, http.StatusNotModified},
+				{"optional whitespace", []string{" \tW/" + etag + " \t"}, http.StatusNotModified},
+				{"wildcard", []string{"*"}, http.StatusNotModified},
+				{"nonmatching", []string{`"different"`}, http.StatusOK},
+				{"invalid unquoted", []string{etag[1 : len(etag)-1]}, http.StatusOK},
+				{"invalid suffix", []string{etag + "suffix"}, http.StatusOK},
+				{"invalid weak prefix", []string{"w/" + etag}, http.StatusOK},
+				{"invalid wildcard list", []string{"*, " + etag}, http.StatusOK},
+				{"invalid quoted contents", []string{`"invalid space", ` + etag}, http.StatusOK},
+				{"unterminated tag", []string{`"unterminated, ` + etag}, http.StatusOK},
+				{"no validator", nil, http.StatusOK},
+			}
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				for _, tt := range tests {
+					t.Run(method+"/"+tt.name, func(t *testing.T) {
+						request := httptest.NewRequest(method, path, nil)
+						for _, value := range tt.values {
+							request.Header.Add("If-None-Match", value)
+						}
+						// A future IMS must not turn a nonmatching ETag into 304.
+						request.Header.Set("If-Modified-Since", "Fri, 31 Dec 9999 23:59:59 GMT")
+						rec := httptest.NewRecorder()
+						handler.ServeHTTP(rec, request)
+						if rec.Code != tt.status {
+							t.Fatalf("status = %d, want %d", rec.Code, tt.status)
+						}
+						for _, key := range []string{"ETag", "Cache-Control", "X-Feature-Count", "X-Filter-Year"} {
+							if rec.Header().Get(key) != original.Header().Get(key) {
+								t.Errorf("%s changed on conditional response", key)
+							}
+						}
+						if tt.status == http.StatusNotModified || method == http.MethodHead {
+							if rec.Body.Len() != 0 {
+								t.Fatal("304 and HEAD responses must not contain a body")
+							}
+						} else if !bytes.Equal(rec.Body.Bytes(), original.Body.Bytes()) {
+							t.Fatal("nonmatching conditional GET must return the complete original body")
+						}
+					})
+				}
+			}
+		})
+	}
+}
+
+func TestDatasetHandler_ValidatorsDoNotBypassInputValidation(t *testing.T) {
+	handler, err := NewHandler(Config{UTF8Dir: "testdata", StaticDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		request := httptest.NewRequest(method, "/api/railroads?date=2024-02-30", nil)
+		request.Header.Set("If-None-Match", "*")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, request)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s invalid date with wildcard: status = %d, want 400", method, rec.Code)
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/railroads", nil)
+	request.Header.Set("If-None-Match", "*")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, request)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatal("wildcard must not bypass method validation")
+	}
+}
+
+func TestDatasetHandler_ETagTracksDatasetSnapshotAndRailwayDependencies(t *testing.T) {
+	directory := t.TempDir()
+	for _, name := range []string{"N05-24_RailroadSection2.geojson", "N05-24_Station2.geojson"} {
+		data, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := Config{UTF8Dir: directory, StaticDir: t.TempDir()}
+	original, err := NewHandler(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(handler http.Handler, path, etag string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		if etag != "" {
+			request.Header.Set("If-None-Match", etag)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, request)
+		return rec
+	}
+	railPath := "/api/railroads?date=1950-01-01"
+	stationPath := "/api/stations?date=1950-01-01"
+	rail := get(original, railPath, "")
+	railAll := get(original, "/api/railroads", "")
+	station := get(original, stationPath, "")
+	stationAll := get(original, "/api/stations", "")
+	if get(original, "/api/railroads?date=1950-12-31", "").Header().Get("ETag") != rail.Header().Get("ETag") {
+		t.Fatal("identical year-filtered bytes must have the same ETag")
+	}
+	if get(original, "/api/railroads?date=1951-01-01", "").Header().Get("ETag") == rail.Header().Get("ETag") {
+		t.Fatal("different year-filtered bytes must have different ETags")
+	}
+
+	file := filepath.Join(directory, "N05-24_RailroadSection2.geojson")
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only change a railway's closing year; the station source is unchanged.
+	changed := bytes.Replace(data, []byte(`"N05_005e": "1950"`), []byte(`"N05_005e": "1949"`), 1)
+	if bytes.Equal(data, changed) {
+		t.Fatal("fixture did not contain the railway year to update")
+	}
+	if err := os.WriteFile(file, changed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := NewHandler(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, previous := range map[string]*httptest.ResponseRecorder{
+		railPath: rail, "/api/railroads": railAll, stationPath: station,
+	} {
+		etag := previous.Header().Get("ETag")
+		if rec := get(original, path, etag); rec.Code != http.StatusNotModified {
+			t.Errorf("%s: running handler must retain its loaded snapshot", path)
+		}
+		rec := get(updated, path, etag)
+		if rec.Code != http.StatusOK || rec.Header().Get("ETag") == etag || bytes.Equal(rec.Body.Bytes(), previous.Body.Bytes()) {
+			t.Errorf("%s: reloaded railway change must invalidate the previous response ETag", path)
+		}
+	}
+	if rec := get(updated, "/api/stations", stationAll.Header().Get("ETag")); rec.Code != http.StatusNotModified {
+		t.Fatal("unchanged full station data must retain its ETag")
+	}
+}
+
+func TestNewHandler_StaticIfModifiedSince(t *testing.T) {
+	directory := t.TempDir()
+	file := filepath.Join(directory, "asset.txt")
+	if err := os.WriteFile(file, []byte("static fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	modified := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(file, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(Config{UTF8Dir: "testdata", StaticDir: directory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/asset.txt", nil)
+	request.Header.Set("If-Modified-Since", modified.UTC().Format(http.TimeFormat))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, request)
+	if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
+		t.Fatal("static FileServer must keep its If-Modified-Since behavior")
 	}
 }

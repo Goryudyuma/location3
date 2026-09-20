@@ -124,12 +124,96 @@ test('GeoJSON is forwarded as an untouched stream, including encoding and length
   for (const internal of env.requests) {
     assert.equal(new URL(internal.url).origin, 'https://l3.063.jp');
     assert.equal(new URL(internal.url).search, '');
-    assert.equal(internal.headers.get('If-None-Match'), null);
+    assert.equal(internal.headers.get('If-None-Match'), new URL(internal.url).pathname === manifestPath ? null : '"old"');
     assert.equal(internal.headers.get('Range'), null);
   }
   assert.equal(env.requests.at(-1).headers.get('Accept-Encoding'), 'gzip');
   assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
   assert.equal(pulls, 1);
+});
+
+test('conditional GET and HEAD preserve asset 304 validators without a response body', async () => {
+  for (const kind of ['railroads', 'stations']) {
+    for (const method of ['GET', 'HEAD']) {
+      for (const validator of ['"fixture"', 'W/"fixture"', '"old", W/"fixture"', '*']) {
+        const env = fixtureEnv({ fetchAsset(internal) {
+          assert.equal(internal.method, method);
+          assert.equal(internal.headers.get('If-None-Match'), validator);
+          assert.equal(internal.headers.get('If-Modified-Since'), null);
+          return new Response(null, {
+            status: 304,
+            headers: {
+              ETag: '"fixture"', Vary: 'Accept-Encoding', 'Cache-Control': 'public, max-age=0',
+              'Content-Length': '123', 'Content-Encoding': 'gzip',
+            },
+          });
+        } });
+        const response = await request(`/api/${kind}?date=1966-01-01`, env, method, {
+          'If-None-Match': validator, 'If-Modified-Since': 'Thu, 01 Jan 2099 00:00:00 GMT',
+        });
+        assert.equal(response.status, 304);
+        assert.equal(response.body, null);
+        assert.equal(await response.text(), '');
+        assert.equal(response.headers.get('ETag'), '"fixture"');
+        assert.equal(response.headers.get('Vary'), 'Accept-Encoding');
+        assert.equal(response.headers.get('Cache-Control'), 'public, max-age=300');
+        assert.equal(response.headers.get('X-Feature-Count'), String(manifest.periods[1][kind].count));
+        assert.equal(response.headers.get('X-Filter-Year'), '1966');
+        assert.equal(response.headers.get('Content-Length'), null);
+        assert.equal(response.headers.get('Content-Encoding'), null);
+        assert.equal(env.requests[0].headers.get('If-None-Match'), null);
+      }
+    }
+  }
+});
+
+test('date validators are forwarded only when If-None-Match is absent', async () => {
+  const modified = 'Thu, 01 Jan 2026 00:00:00 GMT';
+  for (const etag of [undefined, '"outdated"', '']) {
+    const env = fixtureEnv({ fetchAsset(internal) {
+      assert.equal(internal.headers.get('If-None-Match'), etag ?? null);
+      assert.equal(internal.headers.get('If-Modified-Since'), etag === undefined ? modified : null);
+      return etag === undefined
+        ? new Response(null, { status: 304, headers: { 'Last-Modified': modified } })
+        : new Response('updated dataset', { headers: { ETag: '"updated"' } });
+    } });
+    const headers = { 'If-Modified-Since': modified };
+    if (etag !== undefined) headers['If-None-Match'] = etag;
+    const response = await request('/api/stations', env, 'GET', headers);
+    assert.equal(response.status, etag === undefined ? 304 : 200);
+    assert.equal(await response.text(), etag === undefined ? '' : 'updated dataset');
+    assert.equal(response.headers.get('X-Filter-Year'), null);
+  }
+});
+
+test('asset 200 responses still honor weak, list and wildcard validators without reading the body', async () => {
+  for (const method of ['GET', 'HEAD']) {
+    for (const current of ['"current"', 'W/"current"']) {
+      for (const validator of ['"current"', 'W/"current"', '"old,tag", W/"current"', ', "old",, "current", ', '*']) {
+        let canceled = 0;
+        const env = fixtureEnv({ fetchAsset() {
+          return new Response(method === 'HEAD' ? null : new ReadableStream({
+            pull() { throw new Error('304 must not read the GeoJSON'); },
+            cancel() { canceled++; },
+          }, { highWaterMark: 0 }), { headers: { ETag: current } });
+        } });
+        const response = await request('/api/stations?date=1966-01-01', env, method, { 'If-None-Match': validator });
+        assert.equal(response.status, 304, `${current} / ${validator}`);
+        assert.equal(response.body, null);
+        assert.equal(response.headers.get('ETag'), current);
+        assert.equal(canceled, method === 'GET' ? 1 : 0);
+      }
+    }
+  }
+});
+
+test('stale and malformed validators return the current representation', async () => {
+  for (const validator of ['"old"', 'w/"fixture"', 'fixture', '"fixture", garbage', '"fixture" "old"', '"fixture", *', '*, "fixture"', '"unterminated', '"bad tag"', '', ', ,']) {
+    const env = fixtureEnv();
+    const response = await request('/api/railroads', env, 'GET', { 'If-None-Match': validator });
+    assert.equal(response.status, 200, validator);
+    assert.equal(await response.text(), assetBody(manifest.all.railroads.path));
+  }
 });
 
 test('failed manifest fetches and invalid manifests can be retried', async t => {
