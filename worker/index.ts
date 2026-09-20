@@ -1,235 +1,142 @@
-import { PayloadCache } from "./payload-cache.ts";
-
-const RAIL_DATA_KEY = "N05-24_RailroadSection2.geojson";
-const STATION_DATA_KEY = "N05-24_Station2.geojson";
-const START_YEAR_KEY = "N05_005b";
-const END_YEAR_KEY = "N05_005e";
-const LINE_NAME_KEY = "N05_002";
-
-interface Dataset {
-  original: string;
-  parsed: GeoJSONFeatureCollection;
-  features: GeoJSONFeature[];
+interface AssetEntry {
+  path: string;
+  count: number;
 }
 
-interface GeoJSONFeatureCollection {
-  type: string;
-  features: GeoJSONFeature[];
-  [key: string]: unknown;
+interface DatasetPair {
+  railroads: AssetEntry;
+  stations: AssetEntry;
 }
 
-interface GeoJSONFeature {
-  type: string;
-  properties?: Record<string, unknown> | null;
-  geometry: unknown;
-  id?: unknown;
-  bbox?: unknown;
-  [key: string]: unknown;
+interface Period extends DatasetPair {
+  startYear: number;
+}
+
+interface Manifest {
+  version: 1;
+  all: DatasetPair;
+  periods: Period[];
 }
 
 interface Env {
-  DATA_BUCKET: R2Bucket;
   ASSETS: Fetcher;
 }
 
-interface DatasetCache {
-  datasets: Map<string, Promise<Dataset>>;
-  responses: PayloadCache;
-}
-
-// Keep caches isolated if the worker is reused with a different R2 binding.
-const caches = new WeakMap<R2Bucket, DatasetCache>();
-
-function cacheFor(bucket: R2Bucket): DatasetCache {
-  let cache = caches.get(bucket);
-  if (!cache) {
-    cache = { datasets: new Map(), responses: new PayloadCache() };
-    caches.set(bucket, cache);
-  }
-  return cache;
-}
+// Only the small index stays in memory. GeoJSON bodies are streamed directly
+// from static assets, avoiding national datasets in the Worker heap or CPU.
+const manifests = new WeakMap<Fetcher, Promise<Manifest>>();
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/api/railroads" || url.pathname === "/api/stations") {
-      return handleDatasetRequest(request, env, url);
+    if (url.pathname !== "/api/railroads" && url.pathname !== "/api/stations") {
+      return env.ASSETS.fetch(request);
+    }
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new Response("method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
     }
 
-    return env.ASSETS.fetch(request);
+    const year = parseFilterYear(url.searchParams.get("date")?.trim() ?? "");
+    if (year === null) {
+      return new Response("invalid date format, use YYYY-MM-DD", { status: 400 });
+    }
+
+    try {
+      const manifest = await loadManifest(env.ASSETS, request.url);
+      const datasets = year === 0 ? manifest.all : periodForYear(manifest.periods, year);
+      const entry = url.pathname === "/api/railroads" ? datasets.railroads : datasets.stations;
+      const assetHeaders = new Headers();
+      const encoding = request.headers.get("Accept-Encoding");
+      if (encoding) assetHeaders.set("Accept-Encoding", encoding);
+      const asset = await env.ASSETS.fetch(new Request(new URL(entry.path, request.url), {
+        method: request.method,
+        headers: assetHeaders,
+      }));
+      if (asset.status !== 200) throw new Error(`dataset asset returned ${asset.status}`);
+
+      const headers = new Headers(asset.headers);
+      headers.set("Content-Type", "application/geo+json");
+      headers.set("Cache-Control", "public, max-age=300");
+      headers.set("X-Feature-Count", String(entry.count));
+      if (year !== 0) headers.set("X-Filter-Year", String(year));
+      else headers.delete("X-Filter-Year");
+
+      return new Response(request.method === "HEAD" ? null : asset.body, {
+        status: 200,
+        headers,
+        // Preserve any pre-encoded asset bytes and their Content-Encoding.
+        encodeBody: "manual",
+      });
+    } catch (error) {
+      console.error("Failed to serve dataset:", error instanceof Error ? error.message : "unknown error");
+      return new Response("failed to load dataset", { status: 500 });
+    }
   },
 };
 
-async function handleDatasetRequest(request: Request, env: Env, url: URL): Promise<Response> {
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    return new Response("method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
+async function loadManifest(assets: Fetcher, origin: string): Promise<Manifest> {
+  let pending = manifests.get(assets);
+  if (!pending) {
+    pending = (async () => {
+      const response = await assets.fetch(new Request(new URL("/datasets/manifest.json", origin)));
+      if (response.status !== 200) throw new Error(`dataset manifest returned ${response.status}`);
+      const manifest: unknown = await response.json();
+      if (!validManifest(manifest)) throw new Error("invalid dataset manifest");
+      return manifest;
+    })().catch((error) => {
+      // Share concurrent loads, but never retain a failed fetch or validation.
+      manifests.delete(assets);
+      throw error;
+    });
+    manifests.set(assets, pending);
   }
-
-  const dateParam = url.searchParams.get("date")?.trim() ?? "";
-  const filterYear = parseFilterYear(dateParam);
-  if (filterYear === null) {
-    return new Response("invalid date format, use YYYY-MM-DD", { status: 400 });
-  }
-
-  const cache = cacheFor(env.DATA_BUCKET);
-  const datasetKey = url.pathname === "/api/railroads" ? RAIL_DATA_KEY : STATION_DATA_KEY;
-  const responseKey = `${datasetKey}:${filterYear}`;
-  const cachedPayload = filterYear === 0 ? undefined : cache.responses.get(responseKey);
-  if (cachedPayload) {
-    return datasetResponse(request, cachedPayload.body, cachedPayload.count, filterYear);
-  }
-
-  let dataset: Dataset;
-  try {
-    dataset = await loadDataset(env, datasetKey);
-  } catch (err) {
-    console.error(`failed to load dataset ${datasetKey}:`, err);
-    return new Response("failed to load dataset", { status: 500 });
-  }
-
-  let features = filterYear === 0 ? dataset.features : filterByYear(dataset.features, filterYear);
-
-  if (filterYear !== 0 && url.pathname === "/api/stations") {
-    try {
-      const railDataset = await loadDataset(env, RAIL_DATA_KEY);
-      const activeRailFeatures = filterByYear(railDataset.features, filterYear);
-      const allowedLines = activeLineNames(activeRailFeatures);
-      features = features.filter((feature) => allowedLines.has(propertyString(feature.properties, LINE_NAME_KEY)));
-    } catch (err) {
-      console.error("failed to load rail dataset for station filtering", err);
-      return new Response("failed to evaluate station dataset", { status: 500 });
-    }
-  }
-
-  const featureCount = features.length;
-  if (request.method === "HEAD") {
-    return datasetResponse(request, null, featureCount, filterYear);
-  }
-
-  const body = filterYear === 0
-    ? dataset.original
-    : JSON.stringify({ ...dataset.parsed, features });
-
-  if (filterYear !== 0) {
-    cache.responses.set(responseKey, { body, count: featureCount });
-  }
-
-  return datasetResponse(request, body, featureCount, filterYear);
+  return pending;
 }
 
-function datasetResponse(request: Request, body: string | null, count: number, year: number): Response {
-  const headers = new Headers({
-    "Content-Type": "application/geo+json",
-    "Cache-Control": "public, max-age=300",
-    "X-Feature-Count": String(count),
-  });
-  if (year !== 0) {
-    headers.set("X-Filter-Year", String(year));
-  }
-  return new Response(request.method === "HEAD" ? null : body, { status: 200, headers });
+function validEntry(value: unknown): value is AssetEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as AssetEntry;
+  return typeof entry.path === "string" && /^\/datasets\/[a-f0-9]{64}\.geojson$/.test(entry.path)
+    && Number.isSafeInteger(entry.count) && entry.count >= 0;
 }
 
-function parseFilterYear(value: string): number | 0 | null {
-  if (value === "") {
-    return 0;
+function validPair(value: unknown): value is DatasetPair {
+  if (!value || typeof value !== "object") return false;
+  const pair = value as DatasetPair;
+  return validEntry(pair.railroads) && validEntry(pair.stations);
+}
+
+function validManifest(value: unknown): value is Manifest {
+  if (!value || typeof value !== "object") return false;
+  const manifest = value as Manifest;
+  if (manifest.version !== 1 || !validPair(manifest.all)
+    || !Array.isArray(manifest.periods) || manifest.periods.length === 0
+    || manifest.periods.length > 9999) return false;
+  let previousYear = 0;
+  for (const period of manifest.periods) {
+    if (!validPair(period) || !Number.isInteger(period.startYear)
+      || period.startYear <= previousYear || period.startYear > 9999) return false;
+    previousYear = period.startYear;
   }
+  return manifest.periods[0].startYear === 1;
+}
+
+function periodForYear(periods: Period[], year: number): Period {
+  let low = 0;
+  let high = periods.length;
+  while (low + 1 < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (periods[middle].startYear <= year) low = middle;
+    else high = middle;
+  }
+  return periods[low];
+}
+
+function parseFilterYear(value: string): number | null {
+  if (value === "") return 0;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000-")) return null;
   const date = new Date(`${value}T00:00:00.000Z`);
-  // Date parsing normalizes invalid days (such as February 30); round-trip to
-  // reject them and keep the local Go server and Worker behavior identical.
+  // Date parsing normalizes invalid days; reject them by round-tripping.
   if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) return null;
   return date.getUTCFullYear();
-}
-
-function filterByYear(features: GeoJSONFeature[], year: number): GeoJSONFeature[] {
-  return features.filter((feature) => isActiveForYear(feature, year));
-}
-
-function isActiveForYear(feature: GeoJSONFeature, year: number): boolean {
-  if (year === 0) {
-    return true;
-  }
-
-  const props = feature.properties ?? undefined;
-  const startYear = parseYearField(props, START_YEAR_KEY);
-  if (startYear !== null && year < startYear) {
-    return false;
-  }
-
-  const endYear = parseYearField(props, END_YEAR_KEY);
-  if (endYear !== null && year > endYear) {
-    return false;
-  }
-
-  return true;
-}
-
-function parseYearField(props: Record<string, unknown> | undefined, key: string): number | null {
-  if (!props) {
-    return null;
-  }
-  const value = props[key];
-  if (value === undefined || value === null) {
-    return null;
-  }
-
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!/^[+-]?\d+$/.test(trimmed)) return null;
-    const year = Number(trimmed);
-    return Number.isInteger(year) && year > 0 && year < 9000 && year !== 999 ? year : null;
-  }
-
-  if (typeof value === "number") {
-    return Number.isInteger(value) && value > 0 && value < 9000 && value !== 999 ? value : null;
-  }
-
-  return null;
-}
-
-function propertyString(props: Record<string, unknown> | undefined | null, key: string): string {
-  if (!props) {
-    return "";
-  }
-  const value = props[key];
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function activeLineNames(features: GeoJSONFeature[]): Set<string> {
-  const names = new Set<string>();
-  for (const feature of features) {
-    const name = propertyString(feature.properties, LINE_NAME_KEY);
-    if (name !== "") {
-      names.add(name);
-    }
-  }
-  return names;
-}
-
-async function loadDataset(env: Env, key: string): Promise<Dataset> {
-  const datasetCache = cacheFor(env.DATA_BUCKET).datasets;
-  let cached = datasetCache.get(key);
-  if (!cached) {
-    cached = env.DATA_BUCKET.get(key).then(async (object) => {
-      if (!object) {
-        throw new Error(`dataset object ${key} not found in R2 bucket`);
-      }
-      const body = await object.text();
-      const parsed = JSON.parse(body) as GeoJSONFeatureCollection;
-      if (!Array.isArray(parsed.features)) {
-        throw new Error("invalid dataset: missing features array");
-      }
-      return {
-        original: body,
-        parsed,
-        features: parsed.features,
-      };
-    }).catch((err) => {
-      // A transient R2 or parse error must not poison every subsequent request.
-      datasetCache.delete(key);
-      throw err;
-    });
-    datasetCache.set(key, cached);
-  }
-  return cached;
 }

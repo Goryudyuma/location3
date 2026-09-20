@@ -1,153 +1,226 @@
-import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import test from "node:test";
-import worker from "./index.ts";
-import { PayloadCache } from "./payload-cache.ts";
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import worker from './index.ts';
 
-const railKey = "N05-24_RailroadSection2.geojson";
-const stationKey = "N05-24_Station2.geojson";
-const fixtures = new Map(await Promise.all([railKey, stationKey].map(async (key) => [
-  key, await readFile(new URL(`../internal/server/testdata/${key}`, import.meta.url), "utf8"),
-])));
+const entry = (hash, count) => ({ path: `/datasets/${hash.repeat(64)}.geojson`, count });
+const manifest = {
+  version: 1,
+  all: { railroads: entry('a', 10), stations: entry('b', 20) },
+  periods: [
+    { startYear: 1, railroads: entry('c', 0), stations: entry('d', 0) },
+    { startYear: 1950, railroads: entry('e', 4), stations: entry('f', 8) },
+    { startYear: 1967, railroads: entry('1', 5), stations: entry('2', 9) },
+    { startYear: 2025, railroads: entry('3', 6), stations: entry('4', 10) },
+  ],
+};
+const manifestPath = '/datasets/manifest.json';
+const assetBody = path => `GeoJSON bytes for ${path}`;
 
-function fixtureEnv(get) {
-  const reads = [];
+function fixtureEnv({ index = manifest, fetchAsset, fetchManifest } = {}) {
+  const requests = [];
   return {
-    reads,
-    DATA_BUCKET: {
-      async get(key) {
-        reads.push(key);
-        if (get) return get(key);
-        return { text: async () => fixtures.get(key) };
+    requests,
+    ASSETS: {
+      async fetch(request) {
+        requests.push(request);
+        const path = new URL(request.url).pathname;
+        if (path === manifestPath) {
+          return fetchManifest ? fetchManifest(request) : Response.json(index);
+        }
+        if (!path.startsWith('/datasets/')) return new Response('static asset');
+        if (fetchAsset) return fetchAsset(request);
+        return new Response(request.method === 'HEAD' ? null : assetBody(path), {
+          headers: { 'Content-Type': 'application/octet-stream', ETag: '"fixture"', 'Content-Length': '123' },
+        });
       },
     },
-    ASSETS: { fetch: async () => new Response("static asset") },
   };
 }
 
-function request(path, env, method = "GET") {
-  return worker.fetch(new Request(`https://example.test${path}`, { method }), env);
+function request(path, env, method = 'GET', headers) {
+  return worker.fetch(new Request(`https://l3.063.jp${path}`, { method, headers }), env);
 }
 
-test("dates are strict calendar dates, with no R2 reads for invalid input", async () => {
+function paths(env) {
+  return env.requests.map(request => new URL(request.url).pathname);
+}
+
+test('strict calendar dates reject invalid input before any asset access', async () => {
   const env = fixtureEnv();
-  for (const date of ["0000-01-01", "1900-02-29", "2023-02-29", "2024-02-30", "2024-04-31", "2024-13-01", "2024-01-00", "2024-1-01", "2024-01-1", "2024", "2024-01-01T00:00:00Z", "not a date"]) {
-    const response = await request(`/api/railroads?date=${encodeURIComponent(date)}`, env);
-    assert.equal(response.status, 400, date);
+  for (const date of ['0000-01-01', '1900-02-29', '2023-02-29', '2024-02-30', '2024-04-31', '2024-13-01', '2024-01-00', '2024-1-01', '2024-01-1', '2024', '2024-01-01T00:00:00Z', 'not a date']) {
+    assert.equal((await request(`/api/railroads?date=${encodeURIComponent(date)}`, env)).status, 400, date);
   }
-  assert.deepEqual(env.reads, []);
-  for (const date of ["", "  ", " 2024-02-29 ", "2000-02-29", "0001-01-01", "9999-12-31"]) {
+  assert.deepEqual(env.requests, []);
+  for (const date of ['', '  ', ' 2024-02-29 ', '2000-02-29', '0001-01-01', '9999-12-31']) {
     const response = await request(`/api/railroads?date=${encodeURIComponent(date)}`, env);
     assert.equal(response.status, 200, date);
-    assert.equal(response.headers.get("X-Filter-Year"), date.trim() ? String(Number(date.trim().slice(0, 4))) : null);
+    assert.equal(response.headers.get('X-Filter-Year'), date.trim() ? String(Number(date.trim().slice(0, 4))) : null);
   }
 });
 
-test("year boundaries, sentinel values, and active railway names match the Go fixtures", async () => {
+test('all dates and period boundaries select the matching precomputed asset', async () => {
   const env = fixtureEnv();
   const cases = [
-    ["/api/railroads", ["historic", "modern", "boundary", "unknown", "malformed"]],
-    ["/api/railroads?date=1899-12-31", ["unknown", "malformed"]],
-    ["/api/railroads?date=1900-01-01", ["historic", "unknown", "malformed"]],
-    ["/api/railroads?date=1950-01-01", ["historic", "boundary", "unknown", "malformed"]],
-    ["/api/railroads?date=1950-12-31", ["historic", "boundary", "unknown", "malformed"]],
-    ["/api/railroads?date=1951-01-01", ["modern", "unknown", "malformed"]],
-    ["/api/stations", ["old-station", "modern-station", "boundary-station", "orphan-station", "nameless-station", "closed-station"]],
-    ["/api/stations?date=1899-01-01", []],
-    ["/api/stations?date=1950-01-01", ["old-station", "boundary-station"]],
-    ["/api/stations?date=1951-01-01", ["modern-station"]],
+    ['', manifest.all, null],
+    ['?date=', manifest.all, null],
+    ['?date=0001-01-01', manifest.periods[0], '1'],
+    ['?date=1949-12-31', manifest.periods[0], '1949'],
+    ['?date=1950-01-01', manifest.periods[1], '1950'],
+    ['?date=1966-01-01', manifest.periods[1], '1966'],
+    ['?date=1966-12-31', manifest.periods[1], '1966'],
+    ['?date=1967-01-01', manifest.periods[2], '1967'],
+    ['?date=2024-12-31', manifest.periods[2], '2024'],
+    ['?date=2025-01-01', manifest.periods[3], '2025'],
+    ['?date=9999-12-31', manifest.periods[3], '9999'],
   ];
-  for (const [path, ids] of cases) {
-    const response = await request(path, env);
-    assert.equal(response.status, 200, path);
-    const body = await response.json();
-    assert.deepEqual(body.features.map((feature) => feature.id), ids, path);
-    assert.equal(body.type, "FeatureCollection");
-    assert.ok(body.name);
-    const historic = body.features.find((feature) => feature.id === "historic");
-    if (historic) assert.equal(historic.sourceNote, "preserve foreign members");
-    assert.equal(response.headers.get("X-Feature-Count"), String(ids.length));
-    const head = await request(path, env, "HEAD");
-    assert.equal(head.status, 200);
-    assert.deepEqual([...head.headers], [...response.headers]);
-    assert.equal(await head.text(), "");
+  for (const [query, pair, year] of cases) {
+    for (const kind of ['railroads', 'stations']) {
+      const response = await request(`/api/${kind}${query}`, env);
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), assetBody(pair[kind].path));
+      assert.equal(response.headers.get('Content-Type'), 'application/geo+json');
+      assert.equal(response.headers.get('Cache-Control'), 'public, max-age=300');
+      assert.equal(response.headers.get('X-Feature-Count'), String(pair[kind].count));
+      assert.equal(response.headers.get('X-Filter-Year'), year);
+      assert.equal(response.headers.get('ETag'), '"fixture"');
+      assert.equal(response.headers.get('Content-Length'), '123');
+      const head = await request(`/api/${kind}${query}`, env, 'HEAD');
+      assert.equal(head.status, 200);
+      assert.deepEqual([...head.headers], [...response.headers]);
+      assert.equal(await head.text(), '');
+      assert.equal(env.requests.at(-1).method, 'HEAD');
+    }
   }
-  assert.deepEqual(env.reads, [railKey, stationKey]);
+  assert.equal(paths(env).filter(path => path === manifestPath).length, 1);
 });
 
-test("failed R2 requests and malformed objects can be retried", async (t) => {
-  t.mock.method(console, "error", () => {});
-  for (const firstResult of ["throw", "missing", "invalid JSON", "missing features"]) {
+test('GeoJSON is forwarded as an untouched stream, including encoding and length headers', async () => {
+  let pulls = 0;
+  const bytes = new Uint8Array([31, 139, 8, 0, 1, 2, 3, 4]);
+  const body = new ReadableStream({
+    pull(controller) {
+      pulls++;
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  }, { highWaterMark: 0 });
+  const asset = new Response(body, {
+    headers: { 'Content-Encoding': 'gzip', 'Content-Length': String(bytes.length), ETag: '"compressed"', Vary: 'Accept-Encoding' },
+  });
+  for (const method of ['text', 'json', 'arrayBuffer', 'bytes', 'blob']) {
+    Object.defineProperty(asset, method, { value() { throw new Error(`payload ${method} must not be called`); } });
+  }
+  const env = fixtureEnv({ fetchAsset: () => asset });
+  const response = await request('/api/railroads?date=1966-01-01&unexpected=query', env, 'GET', {
+    'Accept-Encoding': 'gzip', 'If-None-Match': '"old"', Range: 'bytes=0-10',
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.body, body);
+  assert.equal(pulls, 0);
+  assert.equal(response.headers.get('Content-Encoding'), 'gzip');
+  assert.equal(response.headers.get('Content-Length'), String(bytes.length));
+  assert.equal(response.headers.get('Vary'), 'Accept-Encoding');
+  assert.equal(response.headers.get('ETag'), '"compressed"');
+  for (const internal of env.requests) {
+    assert.equal(new URL(internal.url).origin, 'https://l3.063.jp');
+    assert.equal(new URL(internal.url).search, '');
+    assert.equal(internal.headers.get('If-None-Match'), null);
+    assert.equal(internal.headers.get('Range'), null);
+  }
+  assert.equal(env.requests.at(-1).headers.get('Accept-Encoding'), 'gzip');
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+  assert.equal(pulls, 1);
+});
+
+test('failed manifest fetches and invalid manifests can be retried', async t => {
+  t.mock.method(console, 'error', () => {});
+  for (const failure of ['throw', '404', 'json', 'schema']) {
     let attempts = 0;
-    const env = fixtureEnv(async (key) => {
+    const env = fixtureEnv({ fetchManifest() {
       if (attempts++ === 0) {
-        if (firstResult === "throw") throw new Error("temporary R2 failure");
-        if (firstResult === "missing") return null;
-        return { text: async () => firstResult === "invalid JSON" ? "broken JSON" : "{}" };
+        if (failure === 'throw') throw new Error('temporary asset failure');
+        if (failure === '404') return new Response('missing', { status: 404 });
+        if (failure === 'json') return new Response('broken JSON');
+        return Response.json({ version: 1 });
       }
-      return { text: async () => fixtures.get(key) };
-    });
-    assert.equal((await request("/api/railroads?date=1950-01-01", env)).status, 500, firstResult);
-    const retry = await request("/api/railroads?date=1950-01-01", env);
-    assert.equal(retry.status, 200, firstResult);
-    assert.equal((await retry.json()).features.length, 4);
+      return Response.json(manifest);
+    } });
+    assert.equal((await request('/api/railroads?date=1966-01-01', env)).status, 500, failure);
+    assert.equal((await request('/api/railroads?date=1966-01-01', env)).status, 200, failure);
     assert.equal(attempts, 2);
   }
 });
 
-test("station requests recover when the railway lookup fails", async (t) => {
-  t.mock.method(console, "error", () => {});
-  let railAttempts = 0;
-  const env = fixtureEnv(async (key) => {
-    if (key === railKey && railAttempts++ === 0) throw new Error("temporary railway failure");
-    return { text: async () => fixtures.get(key) };
-  });
-  assert.equal((await request("/api/stations?date=1950-01-01", env)).status, 500);
-  const retry = await request("/api/stations?date=1950-01-01", env);
-  assert.equal(retry.status, 200);
-  assert.deepEqual((await retry.json()).features.map((feature) => feature.id), ["old-station", "boundary-station"]);
-  assert.deepEqual(env.reads, [stationKey, railKey, railKey]);
+test('invalid versions, period ordering, counts and paths are rejected', async t => {
+  t.mock.method(console, 'error', () => {});
+  const changes = [
+    value => { value.version = 2; },
+    value => { value.all.railroads.path = 'https://other.test/data.geojson'; },
+    value => { value.all.stations.path = '/datasets/../secret'; },
+    value => { value.all.stations.path = '/datasets/a.geojson'; },
+    value => { value.all.railroads.count = -1; },
+    value => { value.all.railroads.count = 1.5; },
+    value => { value.all.railroads.count = Number.MAX_SAFE_INTEGER + 1; },
+    value => { value.periods = []; },
+    value => { value.periods[0].startYear = 2; },
+    value => { value.periods[1].startYear = 1; },
+    value => { value.periods[2].startYear = 1949; },
+    value => { value.periods[2].startYear = 1950.5; },
+    value => { value.periods.at(-1).startYear = 10000; },
+    value => { delete value.periods[1].stations; },
+  ];
+  for (const change of changes) {
+    const index = structuredClone(manifest);
+    change(index);
+    const env = fixtureEnv({ index });
+    assert.equal((await request('/api/stations?date=1966-01-01', env)).status, 500);
+    assert.deepEqual(paths(env), [manifestPath]);
+  }
 });
 
-test("concurrent requests share a dataset load and separate bindings stay isolated", async () => {
-  const env = fixtureEnv();
-  const responses = await Promise.all(Array.from({ length: 5 }, () => request("/api/railroads?date=1950-01-01", env)));
-  assert.ok(responses.every((response) => response.status === 200));
-  assert.deepEqual(env.reads, [railKey]);
-
-  const otherEnv = fixtureEnv(async () => ({ text: async () => '{"type":"FeatureCollection","features":[]}' }));
-  const otherResponse = await request("/api/railroads?date=1950-01-01", otherEnv);
-  assert.deepEqual((await otherResponse.json()).features, []);
-  assert.deepEqual(otherEnv.reads, [railKey]);
+test('failed dataset fetches retry without poisoning the successful manifest cache', async t => {
+  t.mock.method(console, 'error', () => {});
+  for (const failure of ['throw', '404', '206']) {
+    let attempts = 0;
+    const env = fixtureEnv({ fetchAsset(request) {
+      if (attempts++ === 0) {
+        if (failure === 'throw') throw new Error('temporary dataset failure');
+        return new Response('missing or partial', { status: Number(failure) });
+      }
+      return new Response(assetBody(new URL(request.url).pathname));
+    } });
+    assert.equal((await request('/api/stations?date=1966-01-01', env)).status, 500, failure);
+    const retry = await request('/api/stations?date=1966-01-01', env);
+    assert.equal(retry.status, 200, failure);
+    assert.equal(await retry.text(), assetBody(manifest.periods[1].stations.path));
+    assert.equal(paths(env).filter(path => path === manifestPath).length, 1);
+    assert.equal(attempts, 2);
+  }
 });
 
-test("GET and HEAD are supported and other paths are passed to static assets", async () => {
+test('concurrent requests share one manifest and different asset bindings stay isolated', async () => {
   const env = fixtureEnv();
-  const response = await request("/api/railroads", env, "POST");
+  const responses = await Promise.all([
+    request('/api/railroads?date=1966-01-01', env),
+    request('/api/stations?date=1966-01-01', env),
+  ]);
+  assert.ok(responses.every(response => response.status === 200));
+  assert.equal(paths(env).filter(path => path === manifestPath).length, 1);
+  const otherIndex = structuredClone(manifest);
+  otherIndex.periods[1].railroads = entry('9', 99);
+  const otherEnv = fixtureEnv({ index: otherIndex });
+  const other = await request('/api/railroads?date=1966-01-01', otherEnv);
+  assert.equal(other.headers.get('X-Feature-Count'), '99');
+  assert.equal(await other.text(), assetBody(entry('9', 99).path));
+});
+
+test('unsupported methods return Allow and static paths retain the original request', async () => {
+  const env = fixtureEnv();
+  const response = await request('/api/railroads', env, 'POST');
   assert.equal(response.status, 405);
-  assert.equal(response.headers.get("Allow"), "GET, HEAD");
-  assert.deepEqual(env.reads, []);
-  assert.equal(await (await request("/app.js", env)).text(), "static asset");
-});
-
-test("response cache evicts the least recently used year and respects the memory budget", () => {
-  const payload = (body) => ({ body, count: 1 });
-  const cache = new PayloadCache(2, 12);
-  cache.set("1950", payload("ab"));
-  cache.set("1960", payload("cd"));
-  assert.equal(cache.get("1950").body, "ab");
-  cache.set("1970", payload("ef"));
-  assert.equal(cache.get("1960"), undefined);
-  assert.equal(cache.get("1950").body, "ab");
-  cache.set("1980", payload("abcde"));
-  assert.equal(cache.get("1950"), undefined);
-  assert.equal(cache.get("1970"), undefined);
-  assert.equal(cache.get("1980").body, "abcde");
-  cache.set("huge", payload("1234567"));
-  assert.equal(cache.get("huge"), undefined);
-  assert.equal(cache.get("1980").body, "abcde");
-  cache.set("1980", payload("a"));
-  cache.set("1990", payload("bcdef"));
-  assert.equal(cache.get("1980").body, "a");
-  assert.equal(cache.get("1990").body, "bcdef");
+  assert.equal(response.headers.get('Allow'), 'GET, HEAD');
+  assert.deepEqual(env.requests, []);
+  const original = new Request('https://l3.063.jp/app.mjs?version=1');
+  assert.equal(await (await worker.fetch(original, env)).text(), 'static asset');
+  assert.equal(env.requests[0], original);
 });

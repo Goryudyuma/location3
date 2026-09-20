@@ -43,7 +43,7 @@ go test ./...
 npm test
 ```
 
-追加のフロントエンドビルドは不要です。静的なHTML・CSS・ES ModulesをそのままGoサーバー／Workersから配信します。
+フロントエンドはHTML・CSS・ES Modulesです。Goでの起動はビルド不要です。Workersへの公開時は下記のデータ事前生成を自動実行します。
 
 | ファイル | 役割 |
 | --- | --- |
@@ -53,10 +53,11 @@ npm test
 | `web/static/state.mjs` | URLの読み書きと入力値の検証 |
 | `web/static/data.mjs` | API取得・キャンセル・直近2期間のキャッシュ・検索 |
 | `internal/server/` | ローカルデータを配信するGoサーバー |
-| `worker/` | R2データを配信するCloudflare Worker |
+| `worker/` | 生成済みGeoJSONをストリーム配信するCloudflare Worker |
+| `scripts/prepare-data.mjs` | 年別データと静的アセットを公開前に生成 |
 | `tests/`, `internal/server/testdata/` | フロントエンドのロジックテストと共通API fixture |
 
-両バックエンドは `/api/railroads` と `/api/stations` のGET/HEADに対応します。`date=YYYY-MM-DD` を指定すると年単位で絞り込み、未指定なら全件を返します。存在しない日付は400です。駅は当該年の路線名でも絞り込みます。Workerの年別応答キャッシュは最大3件・推定8MiBまでで、大きい応答はキャッシュしません。
+両バックエンドは `/api/railroads` と `/api/stations` のGET/HEADに対応します。`date=YYYY-MM-DD` を指定すると年単位で絞り込み、未指定なら全件を返します。存在しない日付は400です。駅は当該年の路線名でも絞り込みます。Workersでは公開前に全期間・各年のGeoJSONを生成し、リクエスト時は小さな索引から該当ファイルを選んでストリーム配信します。全座標のJSON解析・再シリアライズは行いません。
 
 ブラウザでは年代変更時に古いリクエストを中断し、描画を小分けにして操作を妨げにくくしています。取得失敗時は地図内に再試行ボタンを表示します。
 
@@ -64,17 +65,26 @@ Pull Request では `go test` の結果や使用した追加ツールがあれ�
 
 ## Cloudflare Workers へのデプロイ
 
-このリポジトリには Cloudflare Workers にそのままデプロイできる設定も含めています。Workers 上でフロントエンドを配信し、R2 に配置した GeoJSON を API として提供します。
+Workers Static Assetsにフロントエンドと生成済みGeoJSONをまとめて公開します。Worker実行時に全国データを解析するとCPU時間・メモリ制限に達するため、重い加工はローカルのビルド時に行います。
 
-1. [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/) をインストールし、`wrangler login` でアカウントに接続します。
-2. Cloudflare ダッシュボードまたは `wrangler r2 bucket create location3-data` で R2 バケットを作成します（`wrangler.toml` の `bucket_name` と一致させてください）。
-3. 鉄道路線と駅の GeoJSON をバケットにアップロードします。
-   ```bash
-   wrangler r2 object put location3-data/N05-24_RailroadSection2.geojson --file N05-24_GML/UTF-8/N05-24_RailroadSection2.geojson
-   wrangler r2 object put location3-data/N05-24_Station2.geojson --file N05-24_GML/UTF-8/N05-24_Station2.geojson
-   ```
-4. 必要に応じて `wrangler.toml` の `name` や `bucket_name`、`preview_bucket_name` を編集します。静的アセットは `[assets]` セクションで `binding = "ASSETS"`、`directory = "web/static"` と定義しているので、構成を変えるときは合わせて更新してください。カスタムドメインで公開する場合は `[[routes]]` の `pattern` を任意のドメイン名（例: `l3.example.com`）に書き換え、Cloudflare 側でそのドメインをゾーンに追加しておきます。
-5. `wrangler deploy`（または `make deploy-worker`）を実行すると、`web/static` のアセットが配信され、`/api/railroads` と `/api/stations` が Worker 経由で R2 のデータを提供します。デプロイ後 `wrangler tail` や Cloudflare ダッシュボードのログで動作を確認してください。ブラウザ側では日付・レイヤートグル・地図表示範囲を URL クエリに埋め込むので、必要に応じてそのまま共有できます。
+1. Node.js 22.18以降とWranglerを用意し、`wrangler login` で認証します。
+2. UTF-8の原本2ファイルを `N05-24_GML/UTF-8/` に配置します。元ZIPやShift-JIS版は変更しません。
+3. `npm run deploy`（または `wrangler deploy` / `make deploy-worker`）を実行します。`wrangler.toml` の `[build]` により事前生成が自動で動き、`.generated/assets` を公開します。
+4. 公開後、`/api/railroads?date=1966-01-01` と `/api/stations?date=1966-01-01` が200になることを確認します。N05-24原本ではそれぞれ1,014件・13,210件です。
+
+生成だけを行う場合：
+
+```bash
+npm run build:data
+# 入力を指定する場合
+node scripts/prepare-data.mjs --input-dir N05-24_GML/UTF-8 --output-dir .generated/assets
+```
+
+生成処理は開始年・終了年の境界ごとに結果を計算するため、APIの0001〜9999年の指定にも従来と同じ結果を返します。同一内容はハッシュで重複排除します。生成物は大きいためGitには含めず、原本から再現します。1ファイルがStatic Assetsの25MiB上限を超えた場合は公開前にエラーにします。原本のままでも、空白を除去した全期間の路線データは約21.8MiBに収まります。
+
+索引・GeoJSON・画面は同じWorkerバージョンのアセットとしてまとめて公開されます。既存のR2バケットに保存した原本は削除しませんが、配信時には使用しません。原本がGit管理外なので、CIで公開する場合も生成前に原本を配置してください。
+
+カスタムドメインは `wrangler.toml` の `[[routes]]` で設定します。
 
 ### よく使う Wrangler コマンド
 

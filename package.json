@@ -4,7 +4,8 @@
   "scripts": {
     "test": "node --test tests/*.test.mjs worker/*.test.mjs",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "build:data": "node scripts/prepare-data.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.38.0"
