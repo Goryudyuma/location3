@@ -1,4 +1,5 @@
 import { MIN_YEAR, MAX_YEAR } from './state.mjs';
+import { loadOfflineRailways } from './offline-store.mjs';
 
 function validPosition(value) {
     return Array.isArray(value) && value.length >= 2 && value.every(Number.isFinite)
@@ -51,7 +52,7 @@ async function fetchCollection(fetchFn, endpoint, signal) {
 }
 
 /** Keep only the two most recently used periods, without sharing cancellation between callers. */
-export function createDatasetLoader(fetchFn = fetch) {
+export function createDatasetLoader(fetchFn = fetch, { offlineLoader = loadOfflineRailways } = {}) {
     const cache = new Map();
     let generation = 0;
 
@@ -60,7 +61,8 @@ export function createDatasetLoader(fetchFn = fetch) {
             throw new RangeError(`年は ${MIN_YEAR}〜${MAX_YEAR} または null で指定してください。`);
         }
         signal?.throwIfAborted();
-        if (cache.has(year)) {
+        const offlineEnabled = offlineLoader !== loadOfflineRailways || typeof globalThis.caches !== 'undefined';
+        if (!offlineEnabled && cache.has(year)) {
             const data = cache.get(year);
             cache.delete(year);
             cache.set(year, data);
@@ -78,15 +80,30 @@ export function createDatasetLoader(fetchFn = fetch) {
         const query = year === null ? '' : `?date=${year}-01-01`;
 
         try {
-            const [railroads, stations] = await Promise.race([
-                Promise.all([
+            const resolveData = async () => {
+                if (offlineEnabled) {
+                    try {
+                        const saved = await offlineLoader(year);
+                        controller.signal.throwIfAborted();
+                        if (saved) return saved;
+                    } catch (error) {
+                        if (controller.signal.aborted || error?.name === 'AbortError') throw error;
+                        // CacheStorage can be unavailable or evicted; online loading still works.
+                    }
+                    controller.signal.throwIfAborted();
+                    if (cache.has(year)) return cache.get(year);
+                }
+                const [railroads, stations] = await Promise.all([
                     fetchCollection(fetchFn, `/api/railroads${query}`, controller.signal),
                     fetchCollection(fetchFn, `/api/stations${query}`, controller.signal),
-                ]),
+                ]);
+                return { railroads, stations };
+            };
+            const data = await Promise.race([
+                resolveData(),
                 aborted,
             ]);
             controller.signal.throwIfAborted();
-            const data = { railroads, stations };
             if (currentGeneration === generation) {
                 cache.delete(year);
                 cache.set(year, data);

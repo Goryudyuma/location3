@@ -11,7 +11,7 @@ import (
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP listen address")
 	utf8Dir := flag.String("utf8-dir", "N05-24_GML/UTF-8", "path to UTF-8 dataset directory")
-	staticDir := flag.String("static-dir", "web/static", "path to static asset directory")
+	staticDir := flag.String("static-dir", ".generated/assets", "path to built static assets (run npm run build first)")
 	flag.Parse()
 
 	handler, err := server.NewHandler(server.Config{

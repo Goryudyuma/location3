@@ -13,6 +13,7 @@ export function createMobilePanel() {
   const placements = [
     ['.search-section', searchContent],
     ['.layers-section', settingsContent],
+    ['.offline-section', settingsContent],
     ['.data-note', settingsContent],
     ['.year-presets', $('mobileYearPresets')],
     ['#allYears', $('mobileAllYearsSlot')],
@@ -69,7 +70,7 @@ export function createMobilePanel() {
     opener = openers[mode];
     searchContent.hidden = mode !== 'search';
     settingsContent.hidden = mode !== 'settings';
-    $('mobilePanelTitle').textContent = mode === 'search' ? '駅・路線を探す' : '表示・年代';
+    $('mobilePanelTitle').textContent = mode === 'search' ? '駅・路線を探す' : '表示・保存';
     resetExpanded();
     opener.setAttribute('aria-expanded', 'true');
     updateViewport();

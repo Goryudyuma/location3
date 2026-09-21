@@ -3,7 +3,7 @@ main = "worker/index.ts"
 compatibility_date = "2024-06-20"
 
 [build]
-command = "node scripts/prepare-data.mjs"
+command = "node scripts/build.mjs"
 watch_dir = ["web/static", "scripts"]
 
 [observability]

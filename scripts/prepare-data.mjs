@@ -3,55 +3,13 @@ import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { filterCollections, periodStarts } from '../web/static/railway-filter.mjs';
+
+export { filterCollections, parseYear, periodStarts } from '../web/static/railway-filter.mjs';
 
 const MAX_ASSET_BYTES = 25 * 1024 * 1024;
 const MARKER = '.location3-generated';
 const SOURCES = { railroads: 'N05-24_RailroadSection2.geojson', stations: 'N05-24_Station2.geojson' };
-
-export function parseYear(value) {
-  if (typeof value === 'string') {
-    if (!/^[+-]?\d+$/.test(value.trim())) return null;
-    value = Number(value.trim());
-  }
-  return Number.isInteger(value) && value > 0 && value < 9000 && value !== 999 ? value : null;
-}
-
-function active(feature, year) {
-  const start = parseYear(feature.properties?.N05_005b);
-  const end = parseYear(feature.properties?.N05_005e);
-  return (start === null || year >= start) && (end === null || year <= end);
-}
-
-function lineName(feature) {
-  const name = feature.properties?.N05_002;
-  return typeof name === 'string' ? name.trim() : '';
-}
-
-/** Match the local Go API, including inclusive year bounds and station line membership. */
-export function filterCollections(collections, year) {
-  if (year === null) return collections;
-  const railroads = collections.railroads.features.filter(feature => active(feature, year));
-  const names = new Set(railroads.map(lineName).filter(Boolean));
-  const stations = collections.stations.features.filter(feature => active(feature, year) && names.has(lineName(feature)));
-  return {
-    railroads: { ...collections.railroads, features: railroads },
-    stations: { ...collections.stations, features: stations },
-  };
-}
-
-/** Every calendar year within one interval has exactly the same active features. */
-export function periodStarts(collections) {
-  const starts = new Set([1]);
-  for (const collection of Object.values(collections)) {
-    for (const feature of collection.features) {
-      const start = parseYear(feature.properties?.N05_005b);
-      const end = parseYear(feature.properties?.N05_005e);
-      if (start !== null) starts.add(start);
-      if (end !== null) starts.add(end + 1);
-    }
-  }
-  return [...starts].sort((a, b) => a - b);
-}
 
 function contains(parent, child) {
   const path = relative(parent, child);
@@ -108,7 +66,7 @@ export async function prepareData({ inputDir, staticDir, outputDir, maxAssetByte
         files.add(path);
         bytes += size;
       }
-      return { path, count: collection.features.length };
+      return { path, count: collection.features.length, bytes: size };
     }
 
     async function storePair(pair) {

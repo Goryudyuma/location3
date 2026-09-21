@@ -1,5 +1,12 @@
+import { createBasemapStyle, registerBasemapProtocol } from './basemap.mjs';
+import { featureBounds } from './map-geometry.mjs';
+
 const RAIL_COLOR = '#16755e';
 const STATION_COLOR = '#d89549';
+const EMPTY = { type: 'FeatureCollection', features: [] };
+const RAIL_LAYER = 'railway-lines';
+const STATION_LAYER = 'railway-stations';
+const SELECTED_LAYERS = ['selected-line', 'selected-point'];
 
 function popup(feature, kind) {
   const props = feature.properties ?? {};
@@ -23,135 +30,218 @@ function popup(feature, kind) {
   return container;
 }
 
+function abortError() {
+  return new DOMException('Aborted', 'AbortError');
+}
+
+function withAbort(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const abort = () => { cleanup(); reject(abortError()); };
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+  });
+}
+
 export function createRailwayMap(element, initialView, onMove) {
-  const L = window.L;
+  const gl = window.maplibregl;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const map = L.map(element, {
-    zoomControl: false,
-    preferCanvas: true,
-    renderer: L.canvas({ padding: 0.3, tolerance: 7 }),
+  registerBasemapProtocol();
+  const map = new gl.Map({
+    container: element,
+    style: createBasemapStyle(),
+    center: [initialView.lng, initialView.lat],
+    zoom: initialView.zoom,
     minZoom: 3,
     maxZoom: 18,
-    worldCopyJump: true,
-    fadeAnimation: !reducedMotion,
-    zoomAnimation: !reducedMotion,
-    markerZoomAnimation: !reducedMotion,
-  }).setView([initialView.lat, initialView.lng], initialView.zoom);
+    maxPitch: 0,
+    dragRotate: false,
+    pitchWithRotate: false,
+    touchPitch: false,
+    keyboard: true,
+    attributionControl: false,
+    fadeDuration: reducedMotion ? 0 : 150,
+    locale: {
+      'Map.Title': '鉄道の時間地図',
+      'AttributionControl.ToggleAttribution': '地図の出典を表示',
+      'Popup.Close': '閉じる',
+    },
+  });
+  map.touchZoomRotate.disableRotation();
+  map.keyboard.disableRotation();
+  map.addControl(new gl.AttributionControl({
+    compact: true,
+    customAttribution: '<a href="https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N05-2024.html" target="_blank" rel="noopener">国土数値情報 N05-24</a>',
+  }), 'bottom-left');
+  map.getCanvas().setAttribute('aria-label', '鉄道の時間地図。矢印キーで移動、プラス・マイナスキーで拡大縮小できます');
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> | <a href="https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N05-2024.html" target="_blank" rel="noopener">国土数値情報 N05-24</a>',
-  }).addTo(map);
-
-  let layers = {};
-  let selection;
+  let activePopup;
   let selectionKind;
-  let locationMarker;
+  let selectionGeneration = 0;
   let renderGeneration = 0;
   let visibility = { railroads: true, stations: true };
+  let layersReady = false;
+
+  // style.load does not wait for background tiles, so saved railway data can
+  // still be displayed when the selected background area is unavailable.
+  const ready = new Promise(resolve => map.once('style.load', () => {
+    for (const id of ['railroads', 'stations', 'selection', 'location']) {
+      map.addSource(id, { type: 'geojson', data: EMPTY, maxzoom: 16 });
+    }
+    map.addLayer({
+      id: RAIL_LAYER, type: 'line', source: 'railroads',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': RAIL_COLOR,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 4, 1.4, 10, 2.3, 16, 3.5],
+        'line-opacity': 0.9,
+      },
+    });
+    map.addLayer({
+      id: STATION_LAYER, type: 'circle', source: 'stations',
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 0.7, 6, 1.2, 8, 2, 11, 3.5, 15, 5],
+        'circle-color': STATION_COLOR,
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': ['step', ['zoom'], 0, 6, 0.7],
+      },
+    });
+    map.addLayer({
+      id: SELECTED_LAYERS[0], type: 'line', source: 'selection',
+      filter: ['==', ['geometry-type'], 'LineString'],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#de8b38', 'line-width': 6 },
+    });
+    map.addLayer({
+      id: SELECTED_LAYERS[1], type: 'circle', source: 'selection',
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-radius': 8, 'circle-color': '#de8b38', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 },
+    });
+    map.addLayer({
+      id: 'current-location', type: 'circle', source: 'location',
+      paint: { 'circle-radius': 8, 'circle-color': '#3686cc', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 },
+    });
+    layersReady = true;
+    setVisibility(visibility);
+    resolve();
+  }));
 
   map.on('moveend', () => onMove(getView()));
 
   function getView() {
     const center = map.getCenter().wrap();
-    return { lat: center.lat, lng: center.lng, zoom: map.getZoom() };
+    return { lat: center.lat, lng: center.lng, zoom: Math.round(map.getZoom()) };
   }
 
-  function createLayer(kind) {
-    return L.geoJSON(null, {
-      style: kind === 'railroad' ? { color: RAIL_COLOR, weight: 2, opacity: 0.85 } : undefined,
-      pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
-        radius: stationRadius(),
-        color: '#fff',
-        weight: map.getZoom() < 6 ? 0 : 0.7,
-        fillColor: STATION_COLOR,
-        fillOpacity: 1,
-      }),
-      onEachFeature: (feature, layer) => layer.bindPopup(() => popup(feature, kind), { maxWidth: 270 }),
-    });
+  function getBounds() {
+    const bounds = map.getBounds();
+    return [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
   }
 
-  function stationRadius() {
-    return map.getZoom() < 6 ? 0.8 : map.getZoom() < 8 ? 1.6 : map.getZoom() < 11 ? 2.7 : 4.5;
+  function clearSelection() {
+    selectionGeneration++;
+    selectionKind = undefined;
+    activePopup?.remove();
+    activePopup = undefined;
+    if (layersReady) map.getSource('selection').setData(EMPTY);
   }
-
-  map.on('zoomend', () => {
-    layers.stations?.eachLayer(layer => {
-      layer.setRadius?.(stationRadius());
-      layer.setStyle({ weight: map.getZoom() < 6 ? 0 : 0.7 });
-    });
-  });
 
   async function setData(data, signal) {
     const generation = ++renderGeneration;
-    const next = { railroads: createLayer('railroad'), stations: createLayer('station') };
-    // Build off-map in small batches so the timeline remains responsive on phones.
-    for (const key of ['railroads', 'stations']) {
-      const features = data[key].features;
-      for (let i = 0; i < features.length; i += 600) {
-        if (signal.aborted || generation !== renderGeneration) {
-          throw new DOMException('Aborted', 'AbortError');
-        }
-        next[key].addData(features.slice(i, i + 600));
-        await new Promise(requestAnimationFrame);
-      }
-    }
-    if (signal.aborted || generation !== renderGeneration) {
-      throw new DOMException('Aborted', 'AbortError');
-    }
-    if (selection) map.removeLayer(selection);
-    map.closePopup();
-    Object.values(layers).forEach(layer => map.removeLayer(layer));
-    layers = next;
-    setVisibility(visibility);
+    await withAbort(ready, signal);
+    if (signal?.aborted || generation !== renderGeneration) throw abortError();
+    clearSelection();
+    // MapLibre prepares the GeoJSON in its workers. Both updates are submitted
+    // together, and a later generation always supersedes earlier source data.
+    const updates = ['railroads', 'stations'].map(key => map.getSource(key).setData(data[key]));
+    await withAbort(Promise.all(updates), signal);
+    if (signal?.aborted || generation !== renderGeneration) throw abortError();
   }
 
   function setVisibility(next) {
-    visibility = { ...next };
-    for (const key of ['railroads', 'stations']) {
-      if (!layers[key]) continue;
-      if (visibility[key]) layers[key].addTo(map);
-      else map.removeLayer(layers[key]);
-    }
-    if (selection && !visibility[selectionKind === 'station' ? 'stations' : 'railroads']) {
-      map.removeLayer(selection);
-      map.closePopup();
-      selection = undefined;
-    }
+    visibility = { railroads: next.railroads !== false, stations: next.stations !== false };
+    if (!layersReady) return;
+    map.setLayoutProperty(RAIL_LAYER, 'visibility', visibility.railroads ? 'visible' : 'none');
+    map.setLayoutProperty(STATION_LAYER, 'visibility', visibility.stations ? 'visible' : 'none');
+    if (selectionKind && !visibility[selectionKind === 'station' ? 'stations' : 'railroads']) clearSelection();
+  }
+
+  function showPopup(feature, kind, coordinates) {
+    activePopup?.remove();
+    activePopup = new gl.Popup({ maxWidth: '270px', offset: kind === 'station' ? 10 : 4 })
+      .setLngLat(coordinates)
+      .setDOMContent(popup(feature, kind))
+      .addTo(map);
   }
 
   function focusResult(result) {
-    if (selection) map.removeLayer(selection);
+    const bounds = featureBounds(result.feature);
+    if (!bounds) return;
+    const generation = ++selectionGeneration;
     selectionKind = result.kind;
-    selection = L.geoJSON(result.feature, {
-      style: { color: '#de8b38', weight: 6, opacity: 1 },
-      pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
-        radius: 8, color: '#fff', weight: 3, fillColor: '#de8b38', fillOpacity: 1,
-      }),
-    }).addTo(map);
-    const bounds = selection.getBounds();
-    if (!bounds.isValid()) return;
-    map.fitBounds(bounds, { padding: [45, 65], maxZoom: result.kind === 'station' ? 15 : 12, animate: false });
-    L.popup({ maxWidth: 270 }).setLatLng(bounds.getCenter()).setContent(popup(result.feature, result.kind)).openOn(map);
+    fitBounds(bounds, result.kind === 'station' ? 15 : 12);
+    ready.then(() => {
+      if (generation !== selectionGeneration) return;
+      map.getSource('selection').setData(result.feature);
+      showPopup(result.feature, result.kind, [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2]);
+    });
   }
 
-  const resizeObserver = new ResizeObserver(() => map.invalidateSize({ pan: true, animate: false, debounceMoveend: true }));
+  function featureAt(point) {
+    if (!layersReady) return undefined;
+    const features = map.queryRenderedFeatures([[point.x - 8, point.y - 8], [point.x + 8, point.y + 8]], {
+      layers: [STATION_LAYER, RAIL_LAYER],
+    });
+    return features.find(feature => feature.layer.id === STATION_LAYER) ?? features[0];
+  }
+
+  map.on('click', event => {
+    const feature = featureAt(event.point);
+    if (!feature) return;
+    const kind = feature.layer.id === STATION_LAYER ? 'station' : 'railroad';
+    clearSelection();
+    selectionKind = kind;
+    showPopup(feature, kind, event.lngLat);
+  });
+  if (window.matchMedia('(hover: hover)').matches) {
+    map.on('mousemove', event => { map.getCanvas().style.cursor = featureAt(event.point) ? 'pointer' : ''; });
+  }
+
+  function fitBounds(bounds, maxZoom = 15) {
+    map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], {
+      padding: { top: 65, right: 45, bottom: 45, left: 45 }, maxZoom, duration: 0,
+    });
+  }
+
+  const resizeObserver = new ResizeObserver(() => map.resize());
   resizeObserver.observe(element);
 
   return {
     getView,
+    getBounds,
+    fitBounds,
     setData,
     setVisibility,
     focusResult,
-    zoomIn: () => map.zoomIn(),
-    zoomOut: () => map.zoomOut(),
-    resetView: () => map.fitBounds([[26, 127], [45.7, 146]], { padding: [25, 40], animate: false }),
+    zoomIn: () => map.zoomIn({ duration: reducedMotion ? 0 : 200 }),
+    zoomOut: () => map.zoomOut({ duration: reducedMotion ? 0 : 200 }),
+    resetView: () => map.fitBounds([[127, 26], [146, 45.7]], { padding: 30, duration: 0 }),
     showLocation(lat, lng) {
-      if (locationMarker) map.removeLayer(locationMarker);
-      locationMarker = L.circleMarker([lat, lng], {
-        radius: 8, color: '#fff', weight: 3, fillColor: '#3686cc', fillOpacity: 1,
-      }).addTo(map).bindTooltip('現在地');
-      map.setView([lat, lng], 13, { animate: false });
+      const feature = { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [lng, lat] } };
+      ready.then(() => map.getSource('location').setData(feature));
+      map.jumpTo({ center: [lng, lat], zoom: 13 });
+    },
+    refreshBasemap() {
+      if (!layersReady) return;
+      const source = map.getSource('basemap');
+      const specification = source?.serialize();
+      if (specification?.tiles) source.setTiles(specification.tiles);
+    },
+    destroy() {
+      resizeObserver.disconnect();
+      map.remove();
     },
   };
 }

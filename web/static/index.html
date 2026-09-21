@@ -7,9 +7,9 @@
     <meta name="description" content="1950年から2024年まで、日本の鉄道路線と駅の変遷を地図でたどる。年代を切り替えて、いつもの街の鉄道の歴史を見つけよう。">
     <title>鉄道の時間地図 | 日本の鉄道をたどる</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23136b58'/%3E%3Cpath d='M23 13v38m18-38v38M20 22h24M20 32h24M20 42h24' stroke='white' stroke-width='4'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="stylesheet" href="/vendor/maplibre-gl.css">
     <link rel="stylesheet" href="/styles.css">
-    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module" src="/app.mjs"></script>
   </head>
   <body>
@@ -129,7 +129,7 @@
             <svg class="icon"><use href="#i-search"/></svg>駅・路線を探す
           </button>
           <button id="openSettings" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="mobilePanel">
-            <svg class="icon"><use href="#i-settings"/></svg>表示・年代
+            <svg class="icon"><use href="#i-settings"/></svg>表示・保存
           </button>
         </nav>
         <div class="details" id="details">
@@ -162,10 +162,31 @@
               <span class="switch" aria-hidden="true"></span>
             </label>
           </section>
+          <section class="offline-section" aria-labelledby="offlineTitle">
+            <h2 id="offlineTitle">オフラインで使う</h2>
+            <p class="hint">使いたい地域を地図に表示して保存すると、圏外でも地図と全年代の駅・路線を見られます。</p>
+            <button id="prepareOffline" class="button offline-wide" type="button">この周辺を保存…</button>
+            <div id="offlinePlan" class="offline-plan" hidden>
+              <label for="offlineName">保存する地域の名前</label>
+              <input id="offlineName" type="text" maxlength="40" placeholder="例：札幌周辺" autocomplete="off">
+              <p id="offlineSize" class="hint"></p>
+              <p class="hint">画面の周辺を含む区画を保存します。初回は全国の概略地図と全年代の鉄道データも含みます。</p>
+              <button id="saveOffline" class="button primary-button offline-wide" type="button">保存する</button>
+            </div>
+            <div id="offlineProgress" hidden>
+              <progress id="offlineProgressBar" max="1" value="0" aria-label="保存の進捗"></progress>
+              <button id="cancelOffline" class="button" type="button">保存を中止</button>
+            </div>
+            <p id="offlineStatus" class="hint" role="status" aria-live="polite"></p>
+            <ul id="offlinePacks" class="offline-packs" aria-label="保存した地域"></ul>
+            <label class="offline-toggle"><input id="savedMapsOnly" type="checkbox">保存した地図だけ使う</label>
+            <p class="hint">保存内容はこの端末・ブラウザで使えます。ホーム画面に追加すると開きやすくなります。ブラウザのデータ削除などで保存内容が消える場合があります。</p>
+          </section>
           <div class="data-note">
             <span class="note-label">この地図について</span>
             <p>1950〜2024年の鉄道の変遷を、年ごとに表示します。同じ年の中の開業・廃止日は区別しません。</p>
             <p>出典：<a href="https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N05-2024.html" target="_blank" rel="noopener">国土数値情報（鉄道時系列）N05-24</a><br>本地図の表示内容は国土交通省が保証したものではありません。</p>
+            <p>背景は現在の地図です：<a href="https://protomaps.com" target="_blank" rel="noopener">Protomaps</a> / <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> / Natural Earth。年代を変えても背景は変わりません。</p>
           </div>
         </div>
       </section>
@@ -176,6 +197,7 @@
           <span id="mapYear">2024年の鉄道</span>
           <span id="loadingIndicator" class="loading-indicator" hidden>読み込み中</span>
         </div>
+        <div id="offlineBadge" class="offline-badge" role="status" hidden></div>
         <div class="map-actions" aria-label="地図の操作">
           <div class="zoom-actions">
             <button id="zoomIn" type="button" class="map-button" aria-label="地図を拡大" title="拡大">

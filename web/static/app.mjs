@@ -1,7 +1,9 @@
+import './vendor.mjs';
 import { MIN_YEAR, MAX_YEAR, DEFAULT_VIEW, readState, writeState } from './state.mjs';
 import { createDatasetLoader, searchFeatures } from './data.mjs';
 import { createRailwayMap } from './map.mjs';
 import { createMobilePanel } from './mobile-panel.mjs';
+import { createOfflineControls } from './offline-ui.mjs';
 
 const $ = id => document.getElementById(id);
 const state = readState(window.location.search);
@@ -9,6 +11,7 @@ const loader = createDatasetLoader();
 const numberFormat = new Intl.NumberFormat('ja-JP');
 let railwayMap;
 let mobilePanel;
+let offlineControls;
 let data;
 let loadedYear;
 let requestController;
@@ -264,7 +267,7 @@ function init() {
   updateYearControls();
   $('railroadsToggle').checked = state.railroads;
   $('stationsToggle').checked = state.stations;
-  if (!window.L) {
+  if (!window.maplibregl) {
     showMessage('地図を読み込めませんでした。通信状況を確認してページを再読み込みしてください。');
     document.querySelectorAll('button, input').forEach(control => { control.disabled = true; });
     return;
@@ -272,14 +275,19 @@ function init() {
   railwayMap = createRailwayMap($('map'), state.view ?? DEFAULT_VIEW, view => {
     state.view = view;
     syncURL();
+    offlineControls?.updateView();
   });
   railwayMap.setVisibility(state);
   if (!state.view) railwayMap.resetView();
   bindEvents();
+  offlineControls = createOfflineControls(railwayMap, {
+    closePanel: () => mobilePanel.close(),
+    reloadData: () => { loader.clear(); loadData(); },
+  });
   syncURL();
   loadData();
 }
 
-// Both the CDN script and module must finish before map initialization.
+// Initialize after the document and locally bundled renderer are ready.
 if (document.readyState === 'complete') init();
 else window.addEventListener('load', init, { once: true });
