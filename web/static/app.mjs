@@ -1,12 +1,12 @@
 import './vendor.mjs';
-import { MIN_YEAR, MAX_YEAR, DEFAULT_VIEW, readState, writeState } from './state.mjs';
+import { MIN_YEAR, MAX_YEAR, DEFAULT_VIEW, readInitialState, saveLastState, writeState } from './state.mjs';
 import { createDatasetLoader, searchFeatures } from './data.mjs';
 import { createRailwayMap } from './map.mjs';
 import { createMobilePanel } from './mobile-panel.mjs';
 import { createOfflineControls } from './offline-ui.mjs';
 
 const $ = id => document.getElementById(id);
-const state = readState(window.location.search);
+const state = readInitialState(window.location.search);
 const loader = createDatasetLoader();
 const numberFormat = new Intl.NumberFormat('ja-JP');
 let railwayMap;
@@ -57,6 +57,7 @@ function syncURL() {
   const url = new URL(window.location.href);
   url.search = writeState(state).toString();
   history.replaceState(null, '', url);
+  saveLastState(state);
 }
 
 function showMessage(message, { retry = false, temporary = false } = {}) {
