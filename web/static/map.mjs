@@ -1,5 +1,6 @@
 import { createBasemapStyle, registerBasemapProtocol } from './basemap.mjs';
 import { featureBounds, nearestPointFeature } from './map-geometry.mjs';
+import { stationChoices } from './station-selection.mjs';
 
 const RAIL_COLOR = '#16755e';
 const STATION_COLOR = '#d89549';
@@ -13,7 +14,7 @@ const STATION_RADII = [[4, 0.7], [6, 1.2], [8, 2], [11, 4], [13, 6], [15, 9], [1
 const stationRadius = (extra = 0) => ['interpolate', ['linear'], ['zoom'],
   ...STATION_RADII.flatMap(([zoom, radius]) => [zoom, radius + extra])];
 
-function popup(feature, kind) {
+function popup(feature, kind, choices = [], onSelect) {
   const props = feature.properties ?? {};
   const container = document.createElement('div');
   container.className = 'rail-popup';
@@ -31,6 +32,31 @@ function popup(feature, kind) {
     const year = document.createElement('p');
     year.textContent = `${opened}年 開業`;
     container.append(year);
+  }
+  if (choices.length > 1) {
+    const hint = document.createElement('p');
+    hint.textContent = `この位置の駅・路線（${choices.length}件）`;
+    const list = document.createElement('div');
+    list.className = 'station-choices';
+    list.setAttribute('role', 'group');
+    list.setAttribute('aria-label', 'この位置の駅・路線');
+    for (const candidate of choices) {
+      const properties = candidate.properties ?? {};
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.setAttribute('aria-pressed', String(candidate === feature));
+      const name = document.createElement('span');
+      name.textContent = [properties.N05_011, properties.N05_002].filter(Boolean).join(' · ') || '名称不明';
+      const detail = document.createElement('small');
+      const validYear = year => /^\d{4}$/.test(String(year)) && Number(year) < 9000 ? `${year}年` : '';
+      const start = validYear(properties.N05_005b);
+      const end = validYear(properties.N05_005e);
+      detail.textContent = [properties.N05_003, start || end ? `記録：${start}〜${end}` : ''].filter(Boolean).join(' · ');
+      button.append(name, detail);
+      button.addEventListener('click', () => onSelect(candidate));
+      list.append(button);
+    }
+    container.append(hint, list);
   }
   return container;
 }
@@ -88,6 +114,7 @@ export function createRailwayMap(element, initialView, onMove) {
   let renderGeneration = 0;
   let visibility = { railroads: true, stations: true };
   let layersReady = false;
+  let stations = [];
 
   // style.load does not wait for background tiles, so saved railway data can
   // still be displayed when the selected background area is unavailable.
@@ -137,7 +164,7 @@ export function createRailwayMap(element, initialView, onMove) {
     map.addLayer({
       id: SELECTED_LAYERS[1], type: 'circle', source: 'selection',
       filter: ['==', ['geometry-type'], 'Point'],
-      paint: { 'circle-radius': stationRadius(3), 'circle-color': '#de8b38', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 },
+      paint: { 'circle-radius': stationRadius(5), 'circle-color': '#de8b38', 'circle-opacity': 0.15, 'circle-stroke-color': '#a54e12', 'circle-stroke-width': 3 },
     });
     map.addLayer({
       id: 'current-location', type: 'circle', source: 'location',
@@ -163,8 +190,9 @@ export function createRailwayMap(element, initialView, onMove) {
   function clearSelection() {
     selectionGeneration++;
     selectionKind = undefined;
-    activePopup?.remove();
+    const previous = activePopup;
     activePopup = undefined;
+    previous?.remove();
     if (layersReady) map.getSource('selection').setData(EMPTY);
   }
 
@@ -173,6 +201,7 @@ export function createRailwayMap(element, initialView, onMove) {
     await withAbort(ready, signal);
     if (signal?.aborted || generation !== renderGeneration) throw abortError();
     clearSelection();
+    stations = data.stations.features;
     // MapLibre prepares the GeoJSON in its workers. Both updates are submitted
     // together, and a later generation always supersedes earlier source data.
     const updates = ['railroads', 'stations'].map(key => map.getSource(key).setData(data[key]));
@@ -190,22 +219,55 @@ export function createRailwayMap(element, initialView, onMove) {
   }
 
   function showPopup(feature, kind, coordinates) {
-    activePopup?.remove();
-    activePopup = new gl.Popup({ maxWidth: '270px', offset: kind === 'station' ? 18 : 4 })
-      .setLngLat(coordinates)
-      .setDOMContent(popup(feature, kind))
-      .addTo(map);
+    const choices = kind === 'station' ? stationChoices(feature, stations) : [];
+    const selected = choices[0] ?? feature;
+    const current = new gl.Popup({ maxWidth: '300px', offset: kind === 'station' ? 22 : 4 });
+    let content;
+    let anchor = coordinates;
+    function fitPopup() {
+      if (!content) return;
+      const height = element.clientHeight;
+      const y = Math.max(0, Math.min(height, map.project(anchor).y));
+      content.style.maxHeight = `${Math.max(60, Math.max(y, height - y) - 85)}px`;
+    }
+    activePopup = current;
+    current.on('close', () => {
+      map.off('move', fitPopup);
+      map.off('resize', fitPopup);
+      if (activePopup === current) clearSelection();
+    });
+    map.on('move', fitPopup);
+    map.on('resize', fitPopup);
+    function select(candidate, focus = false) {
+      if (activePopup !== current) return;
+      map.getSource('selection').setData(candidate);
+      if (kind === 'station') {
+        const [lng, lat] = candidate.geometry.coordinates;
+        anchor = [lng + 360 * Math.round((map.getCenter().lng - lng) / 360), lat];
+      }
+      const previousContent = content;
+      const scrollTop = previousContent?.scrollTop ?? 0;
+      content = popup(candidate, kind, choices, next => select(next, true));
+      fitPopup();
+      if (previousContent) previousContent.replaceWith(content);
+      else current.setDOMContent(content);
+      current.setLngLat(anchor);
+      content.scrollTop = scrollTop;
+      if (focus) content.querySelector('[aria-pressed="true"]')?.focus({ preventScroll: true });
+    }
+    select(selected);
+    current.addTo(map);
   }
 
   function focusResult(result) {
     const bounds = featureBounds(result.feature);
     if (!bounds) return;
+    clearSelection();
     const generation = ++selectionGeneration;
     selectionKind = result.kind;
     fitBounds(bounds, result.kind === 'station' ? 15 : 12);
     ready.then(() => {
       if (generation !== selectionGeneration) return;
-      map.getSource('selection').setData(result.feature);
       showPopup(result.feature, result.kind, [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2]);
     });
   }
