@@ -3,6 +3,7 @@ import { invalidateBasemapCache, savedMapsOnly, setSavedMapsOnly } from './basem
 import { boundsCovered } from './offline-coverage.mjs';
 
 const MAX_PACK_BYTES = 200 * 1024 * 1024;
+const COVERAGE_PREFERENCE = 'location3-show-saved-coverage';
 const mb = bytes => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 export function createOfflineControls(map, { closePanel, reloadData }) {
@@ -17,6 +18,10 @@ export function createOfflineControls(map, { closePanel, reloadData }) {
   const supported = 'serviceWorker' in navigator && 'caches' in globalThis && window.isSecureContext;
 
   function status(text) { $('offlineStatus').textContent = text; }
+
+  function updateCoverage() {
+    map.setSavedCoverage(packs, $('showSavedCoverage').checked);
+  }
 
   function updateView() {
     const localOnly = savedMapsOnly() || navigator.onLine === false;
@@ -76,6 +81,7 @@ export function createOfflineControls(map, { closePanel, reloadData }) {
       item.append(info, buttons);
       $('offlinePacks').append(item);
     }
+    updateCoverage();
     updateView();
   }
 
@@ -150,6 +156,11 @@ export function createOfflineControls(map, { closePanel, reloadData }) {
     }
   });
   $('cancelOffline').addEventListener('click', () => controller?.abort());
+  try { $('showSavedCoverage').checked = localStorage.getItem(COVERAGE_PREFERENCE) === 'true'; } catch { /* Private mode. */ }
+  $('showSavedCoverage').addEventListener('change', () => {
+    try { localStorage.setItem(COVERAGE_PREFERENCE, String($('showSavedCoverage').checked)); } catch { /* Private mode. */ }
+    updateCoverage();
+  });
   $('savedMapsOnly').checked = savedMapsOnly();
   $('savedMapsOnly').addEventListener('change', () => {
     setSavedMapsOnly($('savedMapsOnly').checked);

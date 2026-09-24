@@ -1,6 +1,7 @@
 import { createBasemapStyle, registerBasemapProtocol } from './basemap.mjs';
 import { featureBounds, nearestPointFeature } from './map-geometry.mjs';
 import { stationChoices } from './station-selection.mjs';
+import { createSavedCoverageLayer } from './offline-map.mjs';
 
 const RAIL_COLOR = '#16755e';
 const STATION_COLOR = '#d89549';
@@ -175,6 +176,7 @@ export function createRailwayMap(element, initialView, onMove) {
     resolve();
   }));
 
+  const setSavedCoverage = createSavedCoverageLayer(map, ready, RAIL_LAYER);
   map.on('moveend', () => onMove(getView()));
 
   function getView() {
@@ -318,6 +320,7 @@ export function createRailwayMap(element, initialView, onMove) {
     fitBounds,
     setData,
     setVisibility,
+    setSavedCoverage,
     focusResult,
     zoomIn: () => map.zoomIn({ duration: reducedMotion ? 0 : 200 }),
     zoomOut: () => map.zoomOut({ duration: reducedMotion ? 0 : 200 }),

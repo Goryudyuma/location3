@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { boundsCovered } from '../web/static/offline-coverage.mjs';
+import { boundsCovered, savedCoverageFeatures } from '../web/static/offline-coverage.mjs';
 
 test('adjacent saved archives cover a viewport spanning their shared border', () => {
   assert.equal(boundsCovered([130, 30, 140, 40], [[130, 30, 135, 40], [135, 30, 140, 40]]), true);
@@ -64,4 +64,56 @@ test('missing or invalid bounds never claim that a region has been saved', () =>
   }
   assert.equal(boundsCovered([130, 30, 140, 40], []), false);
   assert.equal(boundsCovered([130, 30, 140, 40], [null, [130, 30, Infinity, 40]]), false);
+});
+
+const detail = (regionKey, bounds) => ({ regionKey, bounds });
+const polygonBounds = feature => {
+  const ring = feature.geometry.coordinates[0];
+  return [...ring[0], ...ring[2]];
+};
+
+test('saved polygons use detail archive bounds rather than the requested viewport or overview', () => {
+  const result = savedCoverageFeatures([{
+    bounds: [139.5, 35.5, 139.7, 35.7],
+    archives: [
+      { overview: true, bounds: [122, 20, 154, 46] },
+      { overview: true, regionKey: 'overview', bounds: [-180, -85, 180, 85] },
+      detail('8/227/101', [139.21875, 34.307, 140.625, 35.461]),
+    ],
+  }]);
+  assert.equal(result.type, 'FeatureCollection');
+  assert.equal(result.features.length, 1);
+  assert.deepEqual(polygonBounds(result.features[0]), [139.21875, 34.307, 140.625, 35.461]);
+  assert.equal(result.features[0].properties.regionKey, '8/227/101');
+  const ring = result.features[0].geometry.coordinates[0];
+  assert.deepEqual(ring[0], ring.at(-1));
+});
+
+test('shared regional archives are drawn once across overlapping packs and wrapped coordinates', () => {
+  const west = detail('west', [130, 30, 135, 35]);
+  const east = detail('east', [135, 30, 140, 35]);
+  const packs = [
+    { archives: [west, east] },
+    { archives: [west, detail('east', [495, 30, 500, 35])] },
+  ];
+  assert.deepEqual(savedCoverageFeatures(packs).features.map(polygonBounds), [west.bounds, east.bounds]);
+  assert.deepEqual(savedCoverageFeatures(packs.slice(1)).features.map(polygonBounds), [west.bounds, east.bounds]);
+  assert.deepEqual(savedCoverageFeatures([]).features, []);
+});
+
+test('date-line regions become canonical polygons without a line spanning the globe', () => {
+  for (const bounds of [[170, -10, -170, 10], [170, -10, 190, 10], [530, -10, 550, 10]]) {
+    const features = savedCoverageFeatures([{ archives: [detail('date-line', bounds)] }]).features;
+    assert.deepEqual(features.map(polygonBounds), [[170, -10, 180, 10], [-180, -10, -170, 10]]);
+  }
+  const features = savedCoverageFeatures([{ archives: [detail('edge', [170, -10, 180, 10])] }]).features;
+  assert.equal(features.length, 1);
+});
+
+test('invalid, absent or empty archive boundaries do not produce misleading saved polygons', () => {
+  assert.deepEqual(savedCoverageFeatures(undefined).features, []);
+  const archives = [null, {}, detail('missing'), detail('bad-latitude', [130, -91, 140, 30]),
+    detail('infinite', [130, 30, Infinity, 40]), detail('point', [130, 30, 130, 30]),
+    detail('line', [130, 30, 140, 30])];
+  assert.deepEqual(savedCoverageFeatures([{}, { archives }]).features, []);
 });

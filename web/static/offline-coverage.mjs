@@ -51,3 +51,28 @@ export function boundsCovered(bounds, archivesBounds) {
   const archives = archivesBounds.flatMap(rectangles);
   return views.every(view => rectangleCovered(view, archives));
 }
+
+/** Show only saved detail archives; a pack's viewport is not its saved boundary. */
+export function savedCoverageFeatures(packs) {
+  const features = new Map();
+  for (const pack of packs ?? []) {
+    for (const archive of pack.archives ?? []) {
+      if (!archive?.regionKey || archive.overview) continue;
+      for (const bounds of rectangles(archive.bounds)) {
+        const [west, south, east, north] = bounds;
+        if (west === east || south === north) continue;
+        const key = bounds.join(',');
+        if (features.has(key)) continue;
+        features.set(key, {
+          type: 'Feature',
+          properties: { regionKey: archive.regionKey },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]],
+          },
+        });
+      }
+    }
+  }
+  return { type: 'FeatureCollection', features: [...features.values()] };
+}
