@@ -120,7 +120,7 @@ export function createRailwayMap(element, initialView, onMove) {
         'text-field': ['get', 'N05_011'],
         'text-font': ['Noto Sans CJK JP', 'Hiragino Kaku Gothic ProN', 'Meiryo', 'sans-serif'],
         'text-size': ['interpolate', ['linear'], ['zoom'], 11, 12, 16, 15],
-        'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
+        'text-anchor': 'top',
         'text-radial-offset': 1.3,
         'text-padding': 4,
         'text-max-width': 10,
