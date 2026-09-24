@@ -146,7 +146,9 @@
                 </svg>
               </button>
             </div>
-            <p id="searchHint" class="hint">表示中の年代から探せます</p>
+            <p id="searchHint" class="hint" role="status">表示中の年代から探せます</p>
+            <button id="searchAllYears" type="button" class="search-action" hidden>全期間から探す</button>
+            <button id="retrySearch" type="button" class="search-action" hidden>読み込みを再試行</button>
             <ul id="searchResults" class="search-results" aria-label="検索結果"></ul>
           </section>
           <section class="layers-section" aria-labelledby="layersTitle">

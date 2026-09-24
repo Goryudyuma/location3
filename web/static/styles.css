@@ -470,6 +470,19 @@ h2 {
   overflow: auto;
 }
 
+.search-action {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--accent-light);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .search-results:empty {
   display: none;
 }
