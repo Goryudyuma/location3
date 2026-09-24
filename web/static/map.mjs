@@ -1,5 +1,5 @@
 import { createBasemapStyle, registerBasemapProtocol } from './basemap.mjs';
-import { featureBounds } from './map-geometry.mjs';
+import { featureBounds, nearestPointFeature } from './map-geometry.mjs';
 
 const RAIL_COLOR = '#16755e';
 const STATION_COLOR = '#d89549';
@@ -7,6 +7,10 @@ const EMPTY = { type: 'FeatureCollection', features: [] };
 const RAIL_LAYER = 'railway-lines';
 const STATION_LAYER = 'railway-stations';
 const SELECTED_LAYERS = ['selected-line', 'selected-point'];
+const STATION_HIT_RADIUS = 22;
+const STATION_RADII = [[4, 0.7], [6, 1.2], [8, 2], [11, 4], [13, 6], [15, 9], [17, 12]];
+const stationRadius = (extra = 0) => ['interpolate', ['linear'], ['zoom'],
+  ...STATION_RADII.flatMap(([zoom, radius]) => [zoom, radius + extra])];
 
 function popup(feature, kind) {
   const props = feature.properties ?? {};
@@ -102,10 +106,10 @@ export function createRailwayMap(element, initialView, onMove) {
     map.addLayer({
       id: STATION_LAYER, type: 'circle', source: 'stations',
       paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 0.7, 6, 1.2, 8, 2, 11, 3.5, 15, 5],
+        'circle-radius': stationRadius(),
         'circle-color': STATION_COLOR,
         'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': ['step', ['zoom'], 0, 6, 0.7],
+        'circle-stroke-width': ['step', ['zoom'], 0, 6, 0.7, 12, 1.5],
       },
     });
     map.addLayer({
@@ -117,7 +121,7 @@ export function createRailwayMap(element, initialView, onMove) {
     map.addLayer({
       id: SELECTED_LAYERS[1], type: 'circle', source: 'selection',
       filter: ['==', ['geometry-type'], 'Point'],
-      paint: { 'circle-radius': 8, 'circle-color': '#de8b38', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 },
+      paint: { 'circle-radius': stationRadius(3), 'circle-color': '#de8b38', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 },
     });
     map.addLayer({
       id: 'current-location', type: 'circle', source: 'location',
@@ -170,7 +174,7 @@ export function createRailwayMap(element, initialView, onMove) {
 
   function showPopup(feature, kind, coordinates) {
     activePopup?.remove();
-    activePopup = new gl.Popup({ maxWidth: '270px', offset: kind === 'station' ? 10 : 4 })
+    activePopup = new gl.Popup({ maxWidth: '270px', offset: kind === 'station' ? 18 : 4 })
       .setLngLat(coordinates)
       .setDOMContent(popup(feature, kind))
       .addTo(map);
@@ -191,19 +195,26 @@ export function createRailwayMap(element, initialView, onMove) {
 
   function featureAt(point) {
     if (!layersReady) return undefined;
-    const features = map.queryRenderedFeatures([[point.x - 8, point.y - 8], [point.x + 8, point.y + 8]], {
-      layers: [STATION_LAYER, RAIL_LAYER],
-    });
-    return features.find(feature => feature.layer.id === STATION_LAYER) ?? features[0];
+    const box = radius => [[point.x - radius, point.y - radius], [point.x + radius, point.y + radius]];
+    if (visibility.stations) {
+      const stations = map.queryRenderedFeatures(box(STATION_HIT_RADIUS), { layers: [STATION_LAYER] });
+      const nearest = nearestPointFeature(stations, point, STATION_HIT_RADIUS,
+        coordinates => map.project(coordinates), map.getCenter().lng);
+      if (nearest) return { ...nearest, kind: 'station' };
+    }
+    if (visibility.railroads) {
+      const [feature] = map.queryRenderedFeatures(box(8), { layers: [RAIL_LAYER] });
+      if (feature) return { feature, kind: 'railroad' };
+    }
   }
 
   map.on('click', event => {
-    const feature = featureAt(event.point);
-    if (!feature) return;
-    const kind = feature.layer.id === STATION_LAYER ? 'station' : 'railroad';
+    const hit = featureAt(event.point);
+    if (!hit) return;
+    const { feature, kind, coordinates } = hit;
     clearSelection();
     selectionKind = kind;
-    showPopup(feature, kind, event.lngLat);
+    showPopup(feature, kind, coordinates ?? event.lngLat);
   });
   if (window.matchMedia('(hover: hover)').matches) {
     map.on('mousemove', event => { map.getCanvas().style.cursor = featureAt(event.point) ? 'pointer' : ''; });

@@ -22,3 +22,21 @@ export function featureBounds(feature) {
   geometry(feature?.geometry);
   return bounds.every(Number.isFinite) ? bounds : null;
 }
+
+/** Pick the closest point within a screen-space radius, including wrapped maps. */
+export function nearestPointFeature(features, point, radius, project, centerLongitude = 0) {
+  let nearest;
+  let shortestSquared = radius * radius;
+  for (const feature of features) {
+    if (feature.geometry?.type !== 'Point') continue;
+    const [lng, lat] = feature.geometry.coordinates;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+    const coordinates = [lng + 360 * Math.round((centerLongitude - lng) / 360), lat];
+    const screen = project(coordinates);
+    const distanceSquared = (screen.x - point.x) ** 2 + (screen.y - point.y) ** 2;
+    if (distanceSquared > shortestSquared || (nearest && distanceSquared === shortestSquared)) continue;
+    shortestSquared = distanceSquared;
+    nearest = { feature, coordinates };
+  }
+  return nearest;
+}
