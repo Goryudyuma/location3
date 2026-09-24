@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-import { MIN_YEAR, MAX_YEAR, DEFAULT_VIEW, readState, writeState } from '../web/static/state.mjs';
+import { MIN_YEAR, MAX_YEAR, DEFAULT_VIEW, readInitialState, saveLastState, writeState } from '../web/static/state.mjs';
 import { createDatasetLoader, searchFeatures } from '../web/static/data.mjs';
 
 const html = await readFile(new URL('../web/static/index.html', import.meta.url), 'utf8');
@@ -47,7 +47,7 @@ function harness() {
   };
   const context = {
     window, document, URL, AbortController, setTimeout, clearTimeout, console: { error() {} },
-    MIN_YEAR, MAX_YEAR, DEFAULT_VIEW, readState, writeState, searchFeatures,
+    MIN_YEAR, MAX_YEAR, DEFAULT_VIEW, readInitialState, saveLastState, writeState, searchFeatures,
     history: { replaceState(_state, _title, url) { window.location = new URL(url); } },
     createDatasetLoader: () => createDatasetLoader(url => new Promise((resolve, reject) => {
       pending.push({ url, resolve, reject, settled: false });
