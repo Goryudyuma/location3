@@ -14,6 +14,8 @@ let mobilePanel;
 let offlineControls;
 let data;
 let loadedYear;
+let dataLoading = false;
+let dataError = false;
 let requestController;
 let debounceTimer;
 let messageTimer;
@@ -66,6 +68,8 @@ function showMessage(message, { retry = false, temporary = false } = {}) {
 }
 
 function setLoading(loading) {
+  dataLoading = loading;
+  if (loading) dataError = false;
   const displayYear = loading || !data ? state.year : loadedYear;
   const label = displayYear === null ? '全期間' : `${displayYear}年`;
   $('mapYear').textContent = loading && data && loadedYear !== state.year ? `${label}へ切替中` : `${label}の鉄道`;
@@ -98,6 +102,7 @@ async function loadData() {
   requestController = controller;
   const requestedYear = state.year;
   setLoading(true);
+  renderSearch();
   $('message').hidden = true;
   $('loadStatus').textContent = `${requestedYear === null ? '全期間' : `${requestedYear}年`}のデータを読み込んでいます`;
   try {
@@ -118,6 +123,8 @@ async function loadData() {
     if (controller.signal.aborted || generation !== requestGeneration) return;
     console.error('Dataset load failed:', error);
     setLoading(false);
+    dataError = true;
+    renderSearch();
     $('loadStatus').textContent = 'データを読み込めませんでした';
     showMessage('データを読み込めませんでした。通信状況を確認して再試行してください。', { retry: true });
   }
@@ -135,8 +142,16 @@ function renderSearch() {
   const query = $('searchInput').value.trim();
   $('clearSearch').hidden = !query;
   $('searchResults').replaceChildren();
+  $('searchAllYears').hidden = true;
+  $('retrySearch').hidden = true;
+  $('searchInput').setAttribute('aria-label', state.year === null ? '全期間の駅・路線を検索' : '選択した年代の駅・路線を検索');
   searchMatches = [];
-  if (loadedYear !== state.year || !data) {
+  if (dataError) {
+    $('searchHint').textContent = 'データを読み込めませんでした。再試行してください。';
+    $('retrySearch').hidden = false;
+    return;
+  }
+  if (dataLoading || loadedYear !== state.year || !data) {
     $('searchHint').textContent = 'データの読み込み後に検索できます';
     return;
   }
@@ -145,7 +160,11 @@ function renderSearch() {
     return;
   }
   searchMatches = searchFeatures(data, query);
-  $('searchHint').textContent = searchMatches.length ? `候補 ${searchMatches.length}件 · 選ぶと地図で表示` : '見つかりませんでした。別の名前や年代をお試しください。';
+  $('searchHint').textContent = searchMatches.length
+    ? `候補 ${searchMatches.length}件 · 選ぶと地図で表示`
+    : state.year === null ? '全期間でも見つかりませんでした。別の名前をお試しください。'
+      : `${state.year}年では見つかりませんでした。ほかの年代も探せます。`;
+  $('searchAllYears').hidden = searchMatches.length > 0 || state.year === null;
   for (const [index, result] of searchMatches.entries()) {
     const item = document.createElement('li');
     const button = document.createElement('button');
@@ -218,6 +237,14 @@ function bindEvents() {
   $('railroadsToggle').addEventListener('change', setLayers);
   $('stationsToggle').addEventListener('change', setLayers);
   $('searchInput').addEventListener('input', renderSearch);
+  $('searchAllYears').addEventListener('click', () => {
+    chooseYear(null);
+    $('searchInput').focus({ preventScroll: true });
+  });
+  $('retrySearch').addEventListener('click', () => {
+    loadData();
+    $('searchInput').focus({ preventScroll: true });
+  });
   $('searchInput').addEventListener('keydown', event => {
     if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'Enter' && searchMatches.length) selectResult(0);
