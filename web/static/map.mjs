@@ -6,6 +6,7 @@ const STATION_COLOR = '#d89549';
 const EMPTY = { type: 'FeatureCollection', features: [] };
 const RAIL_LAYER = 'railway-lines';
 const STATION_LAYER = 'railway-stations';
+const STATION_LABEL_LAYER = 'railway-station-names';
 const SELECTED_LAYERS = ['selected-line', 'selected-point'];
 const STATION_HIT_RADIUS = 22;
 const STATION_RADII = [[4, 0.7], [6, 1.2], [8, 2], [11, 4], [13, 6], [15, 9], [17, 12]];
@@ -113,6 +114,21 @@ export function createRailwayMap(element, initialView, onMove) {
       },
     });
     map.addLayer({
+      id: STATION_LABEL_LAYER, type: 'symbol', source: 'stations', minzoom: 11,
+      filter: ['!=', ['coalesce', ['get', 'N05_011'], ''], ''],
+      layout: {
+        'text-field': ['get', 'N05_011'],
+        'text-font': ['Noto Sans CJK JP', 'Hiragino Kaku Gothic ProN', 'Meiryo', 'sans-serif'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 11, 12, 16, 15],
+        'text-anchor': 'top',
+        'text-radial-offset': 1.3,
+        'text-padding': 4,
+        'text-max-width': 10,
+        'text-allow-overlap': false,
+      },
+      paint: { 'text-color': '#634526', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
+    });
+    map.addLayer({
       id: SELECTED_LAYERS[0], type: 'line', source: 'selection',
       filter: ['==', ['geometry-type'], 'LineString'],
       layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -169,6 +185,7 @@ export function createRailwayMap(element, initialView, onMove) {
     if (!layersReady) return;
     map.setLayoutProperty(RAIL_LAYER, 'visibility', visibility.railroads ? 'visible' : 'none');
     map.setLayoutProperty(STATION_LAYER, 'visibility', visibility.stations ? 'visible' : 'none');
+    map.setLayoutProperty(STATION_LABEL_LAYER, 'visibility', visibility.stations ? 'visible' : 'none');
     if (selectionKind && !visibility[selectionKind === 'station' ? 'stations' : 'railroads']) clearSelection();
   }
 
@@ -197,6 +214,10 @@ export function createRailwayMap(element, initialView, onMove) {
     if (!layersReady) return undefined;
     const box = radius => [[point.x - radius, point.y - radius], [point.x + radius, point.y + radius]];
     if (visibility.stations) {
+      const labels = map.queryRenderedFeatures(point, { layers: [STATION_LABEL_LAYER] });
+      const label = nearestPointFeature(labels, point, Infinity,
+        coordinates => map.project(coordinates), map.getCenter().lng);
+      if (label) return { ...label, kind: 'station' };
       const stations = map.queryRenderedFeatures(box(STATION_HIT_RADIUS), { layers: [STATION_LAYER] });
       const nearest = nearestPointFeature(stations, point, STATION_HIT_RADIUS,
         coordinates => map.project(coordinates), map.getCenter().lng);
