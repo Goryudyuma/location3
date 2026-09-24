@@ -1,6 +1,8 @@
 export const MIN_YEAR = 1950;
 export const MAX_YEAR = 2024;
 export const DEFAULT_VIEW = Object.freeze({ lat: 36.5, lng: 137.5, zoom: 6 });
+const LAST_STATE_KEY = 'location3-last-state';
+const SHARE_PARAMETERS = ['year', 'date', 'lat', 'lng', 'zoom', 'rail', 'station'];
 
 function normalizeYear(value) {
     if (value === null || value === 'all') return null;
@@ -67,4 +69,39 @@ export function writeState(state = {}) {
     if (state?.railroads === false) params.set('rail', '0');
     if (state?.stations === false) params.set('station', '0');
     return params;
+}
+
+function rememberedState(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || !(value.year === null || (Number.isInteger(value.year) && value.year >= MIN_YEAR && value.year <= MAX_YEAR))
+        || typeof value.railroads !== 'boolean' || typeof value.stations !== 'boolean'
+        || !value.view || !['lat', 'lng', 'zoom'].every(key => typeof value.view[key] === 'number')) return null;
+    const view = normalizeView(value.view);
+    return view ? { year: value.year, railroads: value.railroads, stations: value.stations, view } : null;
+}
+
+/** A shared link is complete in itself; only home-page visits restore the last view. */
+export function readInitialState(search = '', getStorage = () => globalThis.localStorage) {
+    const params = new URLSearchParams(search);
+    const fromURL = readState(params);
+    if (SHARE_PARAMETERS.some(key => params.has(key))) return fromURL;
+    try {
+        const saved = JSON.parse(getStorage()?.getItem(LAST_STATE_KEY) ?? 'null');
+        return saved?.version === 1 ? rememberedState(saved) ?? fromURL : fromURL;
+    } catch {
+        return fromURL;
+    }
+}
+
+/** Storage is optional: unavailable storage must not interrupt map interactions. */
+export function saveLastState(state, getStorage = () => globalThis.localStorage) {
+    try {
+        const saved = rememberedState(state);
+        const storage = getStorage();
+        if (!saved || !storage) return false;
+        storage.setItem(LAST_STATE_KEY, JSON.stringify({ version: 1, ...saved }));
+        return true;
+    } catch {
+        return false;
+    }
 }
